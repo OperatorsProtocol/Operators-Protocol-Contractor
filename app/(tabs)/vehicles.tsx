@@ -40,6 +40,10 @@ export default function FleetScreen() {
             const fuelLogs = cLogs.filter(l => l.log_type === 'FUEL');
             
             const totalSpent = cLogs.reduce((sum, l) => sum + (l.cost || 0), 0);
+            const bizSpent = cLogs.filter(l => l.is_business).reduce((sum, l) => sum + (l.cost || 0), 0);
+            const bizPercent = totalSpent > 0 ? Math.round((bizSpent / totalSpent) * 100) : 0;
+            const persPercent = totalSpent > 0 ? 100 - bizPercent : 0;
+
             const startOdo = car.odometer || 0;
             const maxLogOdo = cLogs.length > 0 ? Math.max(...cLogs.map(l => l.odometer || 0)) : 0;
             const currentOdo = Math.max(startOdo, maxLogOdo);
@@ -62,7 +66,7 @@ export default function FleetScreen() {
                 fuelEcon = 'Tracked by Hrs';
             }
 
-            return { ...car, totalSpent, currentOdo, fuelEcon, service_interval: car.service_interval || 10000 };
+            return { ...car, totalSpent, bizPercent, persPercent, currentOdo, fuelEcon, service_interval: car.service_interval || 10000 };
         });
         setVehicles(enriched);
         
@@ -119,7 +123,6 @@ export default function FleetScreen() {
       ]);
   };
 
-  // UPDATED: Choice to Reset OR Scan
   const handleResetService = (car: any) => {
       Alert.alert(
           "Log Service",
@@ -252,6 +255,11 @@ export default function FleetScreen() {
                     <TouchableOpacity onPress={() => openEditModal(item)} style={{padding:10}}>
                         <Ionicons name="create-outline" size={20} color="#666" />
                     </TouchableOpacity>
+                </View>
+
+                <View style={{flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, marginBottom: 5}}>
+                    <Text style={{color: '#4CAF50', fontSize: 11, fontWeight: 'bold'}}>💼 {item.bizPercent}% Business</Text>
+                    <Text style={{color: '#9C27B0', fontSize: 11, fontWeight: 'bold'}}>🏠 {item.persPercent}% Personal</Text>
                 </View>
 
                 <View style={styles.statRow}>
