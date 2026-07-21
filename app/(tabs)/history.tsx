@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Image, Modal, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -11,6 +11,7 @@ const MONTHS = ["January", "February", "March", "April", "May", "June", "July", 
 
 export default function HistoryScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams();
   const [logs, setLogs] = useState<any[]>([]);
   const [vehicles, setVehicles] = useState<any[]>([]);
   const [jobs, setJobs] = useState<any[]>([]);
@@ -20,7 +21,6 @@ export default function HistoryScreen() {
   const [filterDate, setFilterDate] = useState(new Date());
   const [viewPhoto, setViewPhoto] = useState<string | null>(null);
 
-  // PILL FILTERS
   const [selectedVehicle, setSelectedVehicle] = useState<string>('ALL');
   const [selectedJobFilter, setSelectedJobFilter] = useState<'ALL' | 'ALL_BIZ' | 'ALL_PERS' | string>('ALL');
 
@@ -41,7 +41,12 @@ export default function HistoryScreen() {
     setRefreshing(false);
   };
 
-  useFocusEffect(useCallback(() => { fetchHistory(); }, [filterDate]));
+  useFocusEffect(useCallback(() => { 
+      fetchHistory(); 
+      if (params.jobFilter) {
+          setSelectedJobFilter(params.jobFilter as string);
+      }
+  }, [filterDate, params.jobFilter]));
 
   const handlePrevMonth = () => setFilterDate(new Date(filterDate.getFullYear(), filterDate.getMonth() - 1, 1));
   const handleNextMonth = () => setFilterDate(new Date(filterDate.getFullYear(), filterDate.getMonth() + 1, 1));
@@ -57,7 +62,6 @@ export default function HistoryScreen() {
       ]);
   };
 
-  // EDIT JUMP ROUTING
   const editLog = (id: number) => {
       router.navigate({ pathname: '/(tabs)', params: { editId: id.toString() } });
   };
@@ -118,7 +122,6 @@ export default function HistoryScreen() {
   const handleExportLedger = async (range: 'month' | 'year' | 'all') => {
       let query = supabase.from('vehicle_logs').select('*').order('created_at', { ascending: false });
       
-      // Apply Date Ranges
       if (range === 'month') {
           const start = new Date(filterDate.getFullYear(), filterDate.getMonth(), 1).toISOString();
           const end = new Date(filterDate.getFullYear(), filterDate.getMonth() + 1, 0, 23, 59, 59, 999).toISOString();
@@ -129,7 +132,6 @@ export default function HistoryScreen() {
           query = query.gte('created_at', start).lte('created_at', end);
       }
 
-      // Apply Pill Filters to Export
       if (selectedVehicle !== 'ALL') query = query.eq('vehicle_id', selectedVehicle);
       if (selectedJobFilter === 'ALL_BIZ') query = query.eq('is_business', true);
       else if (selectedJobFilter === 'ALL_PERS') query = query.eq('is_business', false);
@@ -229,7 +231,7 @@ export default function HistoryScreen() {
                 <TouchableOpacity style={[styles.receiptBtn, {backgroundColor: '#555'}]} onPress={() => setViewPhoto(item.odometer_image)}>
                     <Text style={styles.btnText}>📸 ODO PIC</Text>
                 </TouchableOpacity>
-            ) : item.log_type !== 'MATERIALS' ? (
+            ) : item.log_type !== 'MATERIALS' && item.log_type !== 'LABOUR' ? (
                 <TouchableOpacity style={[styles.receiptBtn, styles.dashedBtn]} onPress={() => handleAttachPhoto(item.id, 'odometer')} disabled={uploadingId === `${item.id}-odometer`}>
                     {uploadingId === `${item.id}-odometer` ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={styles.btnText}>📎 ODO PIC</Text>}
                 </TouchableOpacity>
