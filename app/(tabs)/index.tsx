@@ -41,9 +41,9 @@ export default function ScannerScreen() {
   const [vendor, setVendor] = useState('');
   const [notes, setNotes] = useState('');
   
-  const [logType, setLogType] = useState<'FUEL' | 'MAINTENANCE' | 'MATERIALS'>('FUEL');
+  const [logType, setLogType] = useState<'FUEL' | 'MAINTENANCE' | 'MATERIALS' | 'LABOUR'>('FUEL');
   const [isBusiness, setIsBusiness] = useState(true);
-  const [isFullTank, setIsFullTank] = useState(true); // NEW MPG MATH STATE
+  const [isFullTank, setIsFullTank] = useState(true); 
   
   const [receiptPhoto, setReceiptPhoto] = useState<{uri: string, base64: string} | null>(null);
   const [odometerPhoto, setOdometerPhoto] = useState<{uri: string, base64: string} | null>(null);
@@ -73,7 +73,7 @@ export default function ScannerScreen() {
             setEditId(logData.id.toString());
             setLogType(logData.log_type);
             setIsBusiness(logData.is_business);
-            setIsFullTank(logData.is_full_tank ?? true); // Load full tank state
+            setIsFullTank(logData.is_full_tank ?? true); 
             setCost(logData.cost?.toString() || '');
             setTax(logData.gst_amount?.toString() || ''); 
             setLiters(logData.liters?.toString() || '');
@@ -116,9 +116,9 @@ export default function ScannerScreen() {
     if (params.logType) setLogType(params.logType as any);
   };
 
-  const handleToggleLogType = (type: 'FUEL' | 'MAINTENANCE' | 'MATERIALS') => {
+  const handleToggleLogType = (type: 'FUEL' | 'MAINTENANCE' | 'MATERIALS' | 'LABOUR') => {
       setLogType(type);
-      if (type === 'MATERIALS') handleBusinessToggle(true);
+      if (type === 'MATERIALS' || type === 'LABOUR') handleBusinessToggle(true);
   };
 
   const handleBusinessToggle = (isBiz: boolean) => {
@@ -248,7 +248,7 @@ export default function ScannerScreen() {
 
   const handleSave = async () => {
     if (!cost) return Alert.alert("Missing Info", "Enter a receipt total.");
-    if (logType !== 'MATERIALS' && !selectedVehicle) return Alert.alert("Missing Info", "Select a fleet item.");
+    if (logType !== 'MATERIALS' && logType !== 'LABOUR' && !selectedVehicle) return Alert.alert("Missing Info", "Select a fleet item.");
     if (!selectedJob) return Alert.alert("Missing Project", "Select a Project or Trip.");
     
     setSaving(true);
@@ -291,7 +291,7 @@ export default function ScannerScreen() {
         job_id: selectedJob?.id || null, 
         job_name: selectedJob?.name || 'General', 
         currency: region === 'US' ? 'USD' : 'CAD',
-        is_full_tank: isFullTank // ADDED FULL TANK MATH
+        is_full_tank: isFullTank
       };
 
       if (editId) {
@@ -338,7 +338,6 @@ export default function ScannerScreen() {
   const activeColor = isBusiness ? styles.activeBiz : styles.activePersonal;
 
   return (
-    // iOS KEYBOARD FIX WRAPPER
     <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
       <ScrollView 
         style={[styles.container, { paddingBottom: insets.bottom }]} 
@@ -369,7 +368,7 @@ export default function ScannerScreen() {
                   <Ionicons name="receipt" size={24} color={receiptPhoto ? "#4CAF50" : "#FF9800"} style={{marginBottom: 8}}/>
                   <Text style={{color: receiptPhoto ? '#4CAF50' : '#FFF', fontWeight: 'bold', fontSize: 12, textAlign: 'center'}}>{receiptPhoto ? "RECEIPT SCANNED" : "SCAN RECEIPT"}</Text>
                </TouchableOpacity>
-               {logType !== 'MATERIALS' && (
+               {logType !== 'MATERIALS' && logType !== 'LABOUR' && (
                    <TouchableOpacity style={[styles.fullWidthCameraBtn, odometerPhoto ? {borderColor: '#4CAF50'} : {borderColor: '#2196F3'}]} onPress={() => openCamera('odometer')}>
                       <Ionicons name="speedometer" size={24} color={odometerPhoto ? "#4CAF50" : "#2196F3"} style={{marginBottom: 8}}/>
                       <Text style={{color: odometerPhoto ? '#4CAF50' : '#FFF', fontWeight: 'bold', fontSize: 12, textAlign: 'center'}}>{odometerPhoto ? "ODOMETER SCANNED" : "SCAN ODOMETER"}</Text>
@@ -380,9 +379,10 @@ export default function ScannerScreen() {
 
         <View style={styles.card}>
           <View style={styles.row}>
-             <TouchableOpacity style={[styles.toggleBtn, logType === 'FUEL' && styles.activeToggle]} onPress={() => handleToggleLogType('FUEL')}><Text style={styles.toggleText}>⛽ FUEL & OIL</Text></TouchableOpacity>
+             <TouchableOpacity style={[styles.toggleBtn, logType === 'FUEL' && styles.activeToggle]} onPress={() => handleToggleLogType('FUEL')}><Text style={styles.toggleText}>⛽ FUEL</Text></TouchableOpacity>
              <TouchableOpacity style={[styles.toggleBtn, logType === 'MAINTENANCE' && styles.activeToggle]} onPress={() => handleToggleLogType('MAINTENANCE')}><Text style={styles.toggleText}>🔧 REPAIRS</Text></TouchableOpacity>
              <TouchableOpacity style={[styles.toggleBtn, logType === 'MATERIALS' && styles.activeToggle]} onPress={() => handleToggleLogType('MATERIALS')}><Text style={styles.toggleText}>🧱 MATERIALS</Text></TouchableOpacity>
+             <TouchableOpacity style={[styles.toggleBtn, logType === 'LABOUR' && styles.activeToggle]} onPress={() => handleToggleLogType('LABOUR')}><Text style={styles.toggleText}>⏱️ LABOUR</Text></TouchableOpacity>
           </View>
           <View style={[styles.row, {marginTop: 10}]}>
              <TouchableOpacity style={[styles.toggleBtn, isBusiness && styles.activeBiz]} onPress={() => handleBusinessToggle(true)}><Text style={styles.toggleText}>💼 BUSINESS</Text></TouchableOpacity>
@@ -391,7 +391,7 @@ export default function ScannerScreen() {
 
           {logType !== 'MATERIALS' && (
              <>
-               <Text style={[styles.label, {marginTop: 15}]}>Select Fleet Item</Text>
+               <Text style={[styles.label, {marginTop: 15}]}>Select Fleet Item {logType === 'LABOUR' ? '(Optional)' : ''}</Text>
                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillContainer}>
                {vehicles.map((v: any) => (
                    <TouchableOpacity key={v.id} style={[styles.pill, selectedVehicle?.id === v.id && styles.activeVehicle]} onPress={() => setSelectedVehicle(v)}>
@@ -415,7 +415,7 @@ export default function ScannerScreen() {
            </ScrollView>
         </View>
 
-        {logType !== 'MATERIALS' && (
+        {logType !== 'MATERIALS' && logType !== 'LABOUR' && (
           <View style={styles.card}>
               <Text style={styles.label}>{selectedVehicle?.is_equipment ? 'Machine Hours' : 'Odometer Reading'}</Text>
               <TextInput style={styles.input} value={odometer} onChangeText={setOdometer} keyboardType="number-pad" placeholder={selectedVehicle?.is_equipment ? "Current hours" : "Current odometer"} placeholderTextColor="#666" />
@@ -424,16 +424,18 @@ export default function ScannerScreen() {
 
         <View style={styles.card}>
           <View style={{flexDirection: 'row', gap: 10}}>
-             <View style={{flex: 1}}><Text style={styles.label}>Receipt Total ($)</Text><TextInput style={styles.input} value={cost} onChangeText={setCost} onBlur={() => handleTriangleMath('cost', cost)} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor="#666" /></View>
+             <View style={{flex: 1}}><Text style={styles.label}>Total Amount ($)</Text><TextInput style={styles.input} value={cost} onChangeText={setCost} onBlur={() => handleTriangleMath('cost', cost)} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor="#666" /></View>
              <View style={{flex: 1}}><Text style={styles.label}>Deduct Non-Project ($)</Text><TextInput style={styles.input} value={snackDeduction} onChangeText={setSnackDeduction} onBlur={() => handleTriangleMath('cost', cost)} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor="#666" /></View>
           </View>
 
-          <View style={{marginTop: 15}}>
-              <Text style={styles.label}>Tax ($)</Text>
-              <TextInput style={styles.input} value={tax} onChangeText={setTax} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor="#666" />
-          </View>
+          {logType !== 'LABOUR' && (
+            <View style={{marginTop: 15}}>
+                <Text style={styles.label}>Tax ($)</Text>
+                <TextInput style={styles.input} value={tax} onChangeText={setTax} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor="#666" />
+            </View>
+          )}
 
-          {region === 'CA' && (
+          {region === 'CA' && logType !== 'LABOUR' && (
             <View style={{flexDirection: 'row', marginTop: 10, gap: 5, flexWrap: 'wrap'}}>
                 <TouchableOpacity style={styles.taxBtn} onPress={() => calculateTax(0.05, 0.05)}><Text style={styles.taxText}>5% Tax (AB/Fuel)</Text></TouchableOpacity>
                 <TouchableOpacity style={styles.taxBtn} onPress={() => calculateTax(0.05, 0.12)}><Text style={styles.taxText}>12% Combo (BC/MB)</Text></TouchableOpacity>
@@ -443,7 +445,6 @@ export default function ScannerScreen() {
           )}
         </View>
 
-        {/* FULL TANK TOGGLE FOR FUEL LOGS */}
         {logType === 'FUEL' && (
           <View style={[styles.card, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
             <View>
@@ -473,7 +474,19 @@ export default function ScannerScreen() {
                  </View>
              </>
            )}
-           <TextInput style={[styles.input, {marginBottom: 15}]} value={vendor} onChangeText={setVendor} placeholder="Location / Vendor" placeholderTextColor="#666" />
+           {logType === 'LABOUR' && (
+             <View style={{flexDirection: 'row', gap: 10, marginBottom: 15}}>
+                 <View style={{flex: 1}}>
+                     <Text style={styles.label}>Labour Hours</Text>
+                     <TextInput style={styles.input} value={shopHours} onChangeText={(v) => { setShopHours(v); if(shopRate) setCost((parseFloat(v||'0') * parseFloat(shopRate||'0')).toFixed(2)); }} keyboardType="decimal-pad" placeholder="e.g. 8.5" placeholderTextColor="#666" />
+                 </View>
+                 <View style={{flex: 1}}>
+                     <Text style={styles.label}>Hourly Rate ($)</Text>
+                     <TextInput style={styles.input} value={shopRate} onChangeText={(v) => { setShopRate(v); if(shopHours) setCost((parseFloat(shopHours||'0') * parseFloat(v||'0')).toFixed(2)); }} keyboardType="decimal-pad" placeholder="e.g. 65" placeholderTextColor="#666" />
+                 </View>
+             </View>
+           )}
+           <TextInput style={[styles.input, {marginBottom: 15}]} value={vendor} onChangeText={setVendor} placeholder={logType === 'LABOUR' ? "Client / Site" : "Location / Vendor"} placeholderTextColor="#666" />
            <TextInput style={styles.input} value={notes} onChangeText={setNotes} placeholder="Notes (Optional)" placeholderTextColor="#666" />
         </View>
 
