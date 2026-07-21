@@ -21,21 +21,17 @@ export default function JobsScreen() {
   const [timeFrame, setTimeFrame] = useState<'MONTH' | '3_MONTHS' | 'YEAR' | 'ALL'>('MONTH');
   const [viewMode, setViewMode] = useState<'ACTIVE' | 'COMPLETED'>('ACTIVE');
 
-  // NEW PROJECT STATE
   const [isAddingJob, setIsAddingJob] = useState(false);
   const [newJobName, setNewJobName] = useState('');
   const [newJobIsBiz, setNewJobIsBiz] = useState(true);
 
-  // EDIT PROJECT STATE
   const [isEditingJob, setIsEditingJob] = useState(false);
   const [editJobId, setEditJobId] = useState<number | null>(null);
   const [editJobName, setEditJobName] = useState('');
   const [editJobIsBiz, setEditJobIsBiz] = useState(true);
 
-  // VAULT STATE
   const [vaultJob, setVaultJob] = useState<any>(null);
 
-  // LABOUR STATE
   const [selectedJob, setSelectedJob] = useState<any>(null);
   const [isLabourModalVisible, setIsLabourModalVisible] = useState(false);
   const [labourDate, setLabourDate] = useState(new Date());
@@ -62,7 +58,6 @@ export default function JobsScreen() {
         jData.forEach((job: any) => {
             const jobLogs = lData ? lData.filter((l: any) => l.job_id === job.id) : [];
             
-            // Filter logs based on the selected timeframe for the breakdown
             const periodJobLogs = jobLogs.filter((l: any) => {
                 if (timeFrame === 'ALL') return true;
                 const logDate = new Date(l.created_at);
@@ -86,7 +81,6 @@ export default function JobsScreen() {
                 else if (log.log_type === 'MAINTENANCE') repair += cost;
             });
 
-            // Lifetime is ALWAYS calculated regardless of the timeframe filter
             let lifetimeTotal = 0;
             jobLogs.forEach((log: any) => lifetimeTotal += (log.cost || 0));
 
@@ -334,7 +328,6 @@ export default function JobsScreen() {
           })}
       </ScrollView>
 
-      {/* PROJECT VAULT MODAL */}
       <Modal visible={!!vaultJob} animationType="slide" transparent>
           <View style={styles.modalBg}>
               <View style={styles.modalContent}>
@@ -346,7 +339,15 @@ export default function JobsScreen() {
                   <ScrollView style={{backgroundColor:'#121212', borderRadius:10, padding:10}}>
                       {allLogs.filter(l => l.job_id === vaultJob?.id).length === 0 ? <Text style={{color:'#666', textAlign:'center', marginTop:20}}>No records found.</Text> : null}
                       {allLogs.filter(l => l.job_id === vaultJob?.id).map((log, index) => (
-                          <View key={index} style={styles.logRow}>
+                          <TouchableOpacity 
+                              key={index} 
+                              style={styles.logRow}
+                              onPress={() => {
+                                  const targetJobId = vaultJob.id.toString();
+                                  setVaultJob(null);
+                                  router.push({ pathname: '/(tabs)/history', params: { jobFilter: targetJobId } });
+                              }}
+                          >
                               <View>
                                   <Text style={styles.logDate}>{new Date(log.created_at).toLocaleDateString()} {log.vehicle_name ? `• ${log.vehicle_name}` : ''}</Text>
                                   <Text style={styles.logType}>
@@ -358,14 +359,13 @@ export default function JobsScreen() {
                                   {log.log_type === 'FUEL' && log.liters && <Text style={styles.logOdo}>{(log.cost / log.liters).toFixed(3)}/Vol</Text>}
                                   {log.log_type === 'LABOUR' && log.hours && <Text style={styles.logOdo}>{log.hours} hrs @ ${log.hourly_rate}</Text>}
                               </View>
-                          </View>
+                          </TouchableOpacity>
                       ))}
                   </ScrollView>
               </View>
           </View>
       </Modal>
 
-      {/* LABOUR MODAL */}
       <Modal visible={isLabourModalVisible} animationType="slide" transparent>
           <View style={styles.modalBg}>
               <View style={styles.modalContent}>
@@ -413,7 +413,6 @@ export default function JobsScreen() {
           </View>
       </Modal>
 
-      {/* NEW PROJECT MODAL */}
       <Modal visible={isAddingJob} animationType="fade" transparent>
           <View style={styles.modalBg}>
               <View style={[styles.modalContent, {height: 'auto', paddingBottom: 40}]}>
@@ -429,14 +428,13 @@ export default function JobsScreen() {
                   </View>
 
                   <Text style={styles.label}>Name</Text>
-                  <TextInput style={[styles.input, {marginBottom: 20}]} value={newJobName} onChangeText={setNewJobName} placeholder={newJobIsBiz ? "e.g. Smith Reno" : "e.g. Oregon Roadtrip"} placeholderTextColor="#666" />
+                  <TextInput style={[styles.input, {marginBottom: 20}]} value={newJobName} onChangeText={setNewJobName} placeholder={newJobIsBiz ? "e.g. Smith Reno" : "e.g. Oregon Roadtrip"} placeholderTextColor="#666" autoFocus />
                   <TouchableOpacity onPress={handleSaveNewJob} style={[styles.saveBtn, {marginTop: 0, padding: 15}]}><Text style={styles.saveText}>SAVE DETAILS</Text></TouchableOpacity>
                   <TouchableOpacity onPress={() => setIsAddingJob(false)} style={{marginTop:15, alignItems:'center'}}><Text style={{color:'#666'}}>Cancel</Text></TouchableOpacity>
               </View>
           </View>
       </Modal>
 
-      {/* EDIT PROJECT MODAL */}
       <Modal visible={isEditingJob} animationType="fade" transparent>
           <View style={styles.modalBg}>
               <View style={[styles.modalContent, {height: 'auto', paddingBottom: 40}]}>
