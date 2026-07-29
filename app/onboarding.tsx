@@ -34,14 +34,14 @@ export default function OnboardingScreen() {
   const router = useRouter();
   const [currentIndex, setCurrentIndex] = useState(0);
 
-  // Mark onboarding as complete and go to Login
+  // Mark onboarding as complete and go directly to Paywall
   const completeOnboarding = async () => {
     try {
       await AsyncStorage.setItem('hasSeenOnboarding', 'true');
-      router.replace('/login'); 
+      router.replace('/paywall'); 
     } catch (error) {
       console.log('Error saving onboarding status:', error);
-      router.replace('/login'); // Failsafe: send to login anyway
+      router.replace('/paywall'); // Failsafe: send to paywall anyway
     }
   };
 

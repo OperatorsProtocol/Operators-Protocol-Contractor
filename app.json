@@ -2,11 +2,11 @@
   "expo": {
     "name": "Operators Protocol: Contractor",
     "slug": "operators-protocol-contractor",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "operators-protocol",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
@@ -15,7 +15,7 @@
         "ITSAppUsesNonExemptEncryption": false,
         "NSCameraUsageDescription": "This app requires camera access to scan and capture job site receipts for expense tracking and to log vehicle odometer readings."
       },
-      "buildNumber": "4"
+      "buildNumber": "5"
     },
     "android": {
       "adaptiveIcon": {
@@ -25,7 +25,7 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.operatorsprotocol.contractor",
-      "versionCode": 4
+      "versionCode": 5
     },
     "web": {
       "output": "static",
@@ -39,7 +39,7 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
+          "backgroundColor": "#000000",
           "dark": {
             "backgroundColor": "#000000"
           }
@@ -54,8 +54,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "58d78fa2-530a-4a32-8f8b-57d2053e3ea6"
+        "projectId": "2b5e2d49-477b-4941-82b2-2a31bf417e3b"
       }
-    }
+    },
+    "owner": "operatorsprotocol"
   }
 }
