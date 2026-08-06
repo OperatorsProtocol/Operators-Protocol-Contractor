@@ -2,8 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Stack, useRootNavigationState, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState } from 'react';
-import { Platform } from 'react-native'; // <-- REVENUECAT: Added Platform import
-import Purchases from 'react-native-purchases'; // <-- REVENUECAT: Added Purchases import
+import { Platform } from 'react-native';
+import Purchases from 'react-native-purchases';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { supabase } from '../supabase';
 
@@ -57,17 +57,18 @@ export default function RootLayout() {
 
     const inOnboarding = String(segments[0]) === 'onboarding';
     const inLogin = String(segments[0]) === 'login';
+    const inPaywall = String(segments[0]) === 'paywall'; // <-- Added Paywall check
 
     // RULE 1: If they are logged in, get them into the app (Tabs).
-    if (session && (inLogin || inOnboarding)) {
+    if (session && (inLogin || inOnboarding || inPaywall)) {
       router.replace('/(tabs)');
     } 
-    // RULE 2: Not logged in, haven't seen slides, and not actively on slides or login -> Show Slides
-    else if (!session && !hasSeenOnboarding && !inOnboarding && !inLogin) {
+    // RULE 2: Not logged in, haven't seen slides, and not actively on slides, login, or paywall
+    else if (!session && !hasSeenOnboarding && !inOnboarding && !inLogin && !inPaywall) {
       router.replace('/onboarding');
     } 
-    // RULE 3: Not logged in, HAVE seen slides, and not in login -> Show Login
-    else if (!session && hasSeenOnboarding && !inLogin) {
+    // RULE 3: Not logged in, HAVE seen slides, and not in login or paywall
+    else if (!session && hasSeenOnboarding && !inLogin && !inPaywall) {
       router.replace('/login');
     }
 
@@ -82,6 +83,7 @@ export default function RootLayout() {
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="onboarding" />
         <Stack.Screen name="login" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="paywall" options={{ presentation: 'modal' }} /> {/* <-- Added Paywall Screen */}
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="settings" />
       </Stack>
