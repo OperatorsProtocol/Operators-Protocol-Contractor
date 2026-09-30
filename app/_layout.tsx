@@ -1,91 +1,117 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Stack, useRootNavigationState, useRouter, useSegments } from 'expo-router';
+import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState } from 'react';
-import { Platform } from 'react-native';
+import { ActivityIndicator, Platform, View } from 'react-native';
 import Purchases from 'react-native-purchases';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { supabase } from '../supabase';
 
-// Keep the native splash screen visible while we calculate the routing
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
-  const [session, setSession] = useState<any>(null);
-  const [isReady, setIsReady] = useState(false);
-  const [hasSeenOnboarding, setHasSeenOnboarding] = useState(false);
-  
-  const segments = useSegments();
+  const [appState, setAppState] = useState<'CHECKING' | 'ONBOARDING' | 'LOGGED_OUT' | 'PAYWALL' | 'AUTHORIZED'>('CHECKING');
   const router = useRouter();
-  const navigationState = useRootNavigationState(); 
+  const segments = useSegments();
 
-  // 1. Fetch initial state from device memory and Supabase
   useEffect(() => {
-    // --- REVENUECAT INITIALIZATION ---
-    if (Platform.OS === 'ios') {
-      Purchases.configure({ apiKey: 'appl_lgKvKPPqhlvgSHBVGSNWkMkoRfp' });
-    } else if (Platform.OS === 'android') {
-      Purchases.configure({ apiKey: 'goog_RpQNNwaPVxvarJLCHCDShGJpDWQ' });
-    }
-    // ----------------------------------
+    let isMounted = true;
 
-    const fetchState = async () => {
-      const [seenStr, { data: { session: currentSession } }] = await Promise.all([
-        AsyncStorage.getItem('hasSeenOnboarding'),
-        supabase.auth.getSession()
-      ]);
+    const checkUserAccess = async (currentSession: any) => {
+      if (!currentSession?.user) {
+         await AsyncStorage.removeItem('hasActiveSubscription');
+         const seen = await AsyncStorage.getItem('hasSeenOnboarding');
+         if (isMounted) setAppState(seen === 'true' ? 'LOGGED_OUT' : 'ONBOARDING');
+         return;
+      }
 
-      setHasSeenOnboarding(seenStr === 'true');
-      setSession(currentSession);
-      setIsReady(true); 
+      try {
+         await Purchases.logIn(currentSession.user.id);
+         const customerInfo = await Purchases.getCustomerInfo();
+         const active = Object.keys(customerInfo.entitlements.active).length > 0;
+         
+         if (active) {
+            await AsyncStorage.setItem('hasActiveSubscription', 'true');
+            if (isMounted) setAppState('AUTHORIZED');
+         } else {
+            await AsyncStorage.removeItem('hasActiveSubscription');
+            if (isMounted) setAppState('PAYWALL');
+         }
+      } catch (e) {
+         const cachedSub = await AsyncStorage.getItem('hasActiveSubscription');
+         if (cachedSub === 'true' && isMounted) {
+             setAppState('AUTHORIZED');
+         } else if (isMounted) {
+             setAppState('PAYWALL');
+         }
+      }
     };
 
-    fetchState();
+    const initApp = async () => {
+      try {
+        if (Platform.OS === 'ios') Purchases.configure({ apiKey: 'appl_lgKvKPPqhlvgSHBVGSNWkMkoRfp' });
+        else if (Platform.OS === 'android') Purchases.configure({ apiKey: 'goog_RpQNNwaPVxvarJLCHCDShGJpDWQ' });
+      } catch (e) {}
 
-    // Listen for sign outs / sign ins
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
+      const { data: { session } } = await supabase.auth.getSession();
+      await checkUserAccess(session);
+    };
+
+    initApp();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
+      if (event === 'SIGNED_IN') {
+          setAppState('CHECKING'); 
+          await checkUserAccess(newSession);
+      } else if (event === 'SIGNED_OUT') {
+          await AsyncStorage.removeItem('hasActiveSubscription');
+          const seen = await AsyncStorage.getItem('hasSeenOnboarding');
+          setAppState(seen === 'true' ? 'LOGGED_OUT' : 'ONBOARDING');
+      }
     });
 
-    return () => subscription.unsubscribe();
+    Purchases.addCustomerInfoUpdateListener((customerInfo) => {
+        const active = Object.keys(customerInfo.entitlements.active).length > 0;
+        if (active && isMounted) {
+            AsyncStorage.setItem('hasActiveSubscription', 'true');
+            setAppState('AUTHORIZED');
+        }
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
-  // 2. The Traffic Cop
   useEffect(() => {
-    // Wait until we have the auth data AND the router is fully awake
-    if (!isReady || !navigationState?.key) return;
+    if (appState === 'CHECKING') return;
 
-    const inOnboarding = String(segments[0]) === 'onboarding';
-    const inLogin = String(segments[0]) === 'login';
-    const inPaywall = String(segments[0]) === 'paywall'; // <-- Added Paywall check
+    const rootSegment = segments[0];
 
-    // RULE 1: If they are logged in, get them into the app (Tabs).
-    if (session && (inLogin || inOnboarding || inPaywall)) {
-      router.replace('/(tabs)');
-    } 
-    // RULE 2: Not logged in, haven't seen slides, and not actively on slides, login, or paywall
-    else if (!session && !hasSeenOnboarding && !inOnboarding && !inLogin && !inPaywall) {
-      router.replace('/onboarding');
-    } 
-    // RULE 3: Not logged in, HAVE seen slides, and not in login or paywall
-    else if (!session && hasSeenOnboarding && !inLogin && !inPaywall) {
-      router.replace('/login');
-    }
+    if (appState === 'ONBOARDING' && rootSegment !== 'onboarding' && rootSegment !== 'login') router.replace('/onboarding');
+    else if (appState === 'LOGGED_OUT' && rootSegment !== 'login' && rootSegment !== 'onboarding') router.replace('/login');
+    else if (appState === 'PAYWALL' && rootSegment !== 'paywall') router.replace('/paywall');
+    else if (appState === 'AUTHORIZED' && rootSegment !== '(tabs)') router.replace('/(tabs)');
 
-    // Routing is decided. Drop the splash screen!
     SplashScreen.hideAsync();
+  }, [appState, segments]);
 
-  }, [session, isReady, segments, navigationState?.key, hasSeenOnboarding]);
+  if (appState === 'CHECKING') {
+      return (
+          <View style={{ flex: 1, backgroundColor: '#121212', justifyContent: 'center', alignItems: 'center' }}>
+              <ActivityIndicator size="large" color="#FF9800" />
+          </View>
+      );
+  }
 
-  // Render the stack wrapped in Safe Area for Android navigation buttons
   return (
     <SafeAreaProvider>
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="onboarding" />
         <Stack.Screen name="login" options={{ presentation: 'modal' }} />
-        <Stack.Screen name="paywall" options={{ presentation: 'modal' }} /> {/* <-- Added Paywall Screen */}
+        <Stack.Screen name="paywall" options={{ gestureEnabled: false }} />
         <Stack.Screen name="(tabs)" />
-        <Stack.Screen name="settings" />
       </Stack>
     </SafeAreaProvider>
   );

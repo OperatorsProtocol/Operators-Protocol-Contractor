@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Keyboard, Modal, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../../supabase';
@@ -20,8 +21,12 @@ export default function ScannerScreen() {
   const [scanMode, setScanMode] = useState<'receipt' | 'odometer'>('receipt');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [region, setRegion] = useState<'CA' | 'US'>('CA');
   
+  // Custom User Preferences Synced from Settings Tab
+  const [region, setRegion] = useState<'CA' | 'US'>('CA');
+  const [tax1Rate, setTax1Rate] = useState(5);
+  const [tax2Rate, setTax2Rate] = useState(12);
+
   const [zoomLevel, setZoomLevel] = useState(0);
   const [editId, setEditId] = useState<string | null>(null);
 
@@ -42,6 +47,7 @@ export default function ScannerScreen() {
   const [notes, setNotes] = useState('');
   
   const [logType, setLogType] = useState<'FUEL' | 'MAINTENANCE' | 'MATERIALS' | 'LABOUR'>('FUEL');
+  const [expenseCategory, setExpenseCategory] = useState<string>('FUEL');
   const [isBusiness, setIsBusiness] = useState(true);
   const [isFullTank, setIsFullTank] = useState(true); 
   
@@ -56,11 +62,51 @@ export default function ScannerScreen() {
   const [isAddingJob, setIsAddingJob] = useState(false);
   const [newJobName, setNewJobName] = useState('');
 
+  // -----------------------------------------
+  // DYNAMIC UI RULES
+  // -----------------------------------------
+  const showVehicleSelector = ['FUEL', 'MAINTENANCE', 'INSURANCE', 'PARKING'].includes(expenseCategory);
+  const showOdometerField = ['FUEL', 'MAINTENANCE', 'INSURANCE'].includes(expenseCategory);
+
   useFocusEffect(useCallback(() => { 
       fetchDropdownData(); 
   }, [params.prefillJob, params.prefillVehicle, params.logType, params.editId]));
 
+  // -----------------------------------------
+  // AUTO-SYNC MATH FOR REPAIRS & LABOUR
+  // -----------------------------------------
+  useEffect(() => {
+    if (expenseCategory === 'MAINTENANCE') {
+       const h = parseFloat(shopHours) || 0;
+       const r = parseFloat(shopRate) || 0;
+       const p = parseFloat(partsCost) || 0;
+       if (h > 0 || r > 0 || p > 0) setCost(((h * r) + p).toFixed(2));
+    } else if (expenseCategory === 'LABOUR') {
+       const h = parseFloat(shopHours) || 0;
+       const r = parseFloat(shopRate) || 0;
+       if (h > 0 || r > 0) setCost((h * r).toFixed(2));
+    }
+  }, [shopHours, shopRate, partsCost, expenseCategory]);
+
   const fetchDropdownData = async () => {
+    try {
+        const t1 = await AsyncStorage.getItem('tax1Rate');
+        const t2 = await AsyncStorage.getItem('tax2Rate');
+        const reg = await AsyncStorage.getItem('defaultRegion');
+        
+        if (t1) setTax1Rate(Number(t1));
+        if (t2) setTax2Rate(Number(t2));
+        if (reg) setRegion(reg as 'CA' | 'US');
+    } catch (e) { 
+        console.log("Failed to load settings in Scanner", e); 
+    }
+
+    const { data: { user }, error: authErr } = await supabase.auth.getUser();
+    if (!user || authErr) {
+       await supabase.auth.signOut();
+       return;
+    }
+
     const { data: vData } = await supabase.from('vehicles').select('*').order('is_default', { ascending: false });
     const { data: jData } = await supabase.from('jobs').select('*').eq('is_active', true).order('created_at', { ascending: true });
     
@@ -71,7 +117,8 @@ export default function ScannerScreen() {
         const { data: logData } = await supabase.from('vehicle_logs').select('*').eq('id', params.editId).single();
         if (logData) {
             setEditId(logData.id.toString());
-            setLogType(logData.log_type);
+            setLogType(logData.log_type || 'FUEL');
+            setExpenseCategory(logData.expense_category || logData.log_type || 'FUEL');
             setIsBusiness(logData.is_business);
             setIsFullTank(logData.is_full_tank ?? true); 
             setCost(logData.cost?.toString() || '');
@@ -106,26 +153,30 @@ export default function ScannerScreen() {
             if (matchedJob) {
                 setSelectedJob(matchedJob);
                 setIsBusiness(params.isBiz === 'true');
-                setLogType('MATERIALS'); 
+                setLogType('MATERIALS');
+                setExpenseCategory('MATERIALS');
             }
         } else {
-            const defaultBiz = jData.find((j: any) => j.name === 'General Business');
-            if (defaultBiz) setSelectedJob(defaultBiz);
+            setSelectedJob(null); // Explicitly default to General Overhead
         }
     }
-    if (params.logType) setLogType(params.logType as any);
+    if (params.logType) {
+      setLogType(params.logType as any);
+      setExpenseCategory(params.logType as any);
+    }
   };
 
-  const handleToggleLogType = (type: 'FUEL' | 'MAINTENANCE' | 'MATERIALS' | 'LABOUR') => {
+  const handleCategorySelect = (category: string, type: 'FUEL' | 'MAINTENANCE' | 'MATERIALS' | 'LABOUR') => {
+      setExpenseCategory(category);
       setLogType(type);
-      if (type === 'MATERIALS' || type === 'LABOUR') handleBusinessToggle(true);
+      if (category === 'MATERIALS' || category === 'PERMITS' || category === 'RENTALS' || category === 'LABOUR') {
+          handleBusinessToggle(true);
+      }
   };
 
   const handleBusinessToggle = (isBiz: boolean) => {
       setIsBusiness(isBiz);
-      const targetName = isBiz ? 'General Business' : 'General Personal';
-      const defaultJob = jobs.find(j => j.name === targetName);
-      setSelectedJob(defaultJob || null);
+      setSelectedJob(null); // Resets back to General when switching biz/personal
   };
 
   const handleSaveNewJob = async () => {
@@ -212,7 +263,7 @@ export default function ScannerScreen() {
         const decimals3 = text.match(/\b\d+\.\d{3}/g); 
         if (decimals3 && decimals3.length >= 2) {
             const nums = decimals3.map((val: any) => Number(val)).sort((a: number, b: number) => b - a);
-            setLiters(nums[0].toString());       
+            setLiters(nums[0].toString());      
             setPricePerUnit(nums[1].toString()); 
             if (foundCost === 0) foundCost = parseFloat((nums[0] * nums[1]).toFixed(2));
         }
@@ -228,11 +279,16 @@ export default function ScannerScreen() {
     } catch (e) { console.log("OCR Error:", e); }
   };
 
-  const calculateTax = (gstRate: number, totalTaxRate: number) => { 
+  const calculateTax = (rate: number) => { 
       const adjustedCost = parseFloat(cost || '0') - parseFloat(snackDeduction || '0');
       if (adjustedCost > 0) {
-          const subtotal = adjustedCost / (1 + totalTaxRate);
-          setTax((subtotal * gstRate).toFixed(2)); 
+          if (expenseCategory === 'FUEL') {
+              const taxAmt = adjustedCost - (adjustedCost / (1 + rate));
+              setTax(taxAmt.toFixed(2));
+          } else {
+              const taxAmt = adjustedCost * rate;
+              setTax(taxAmt.toFixed(2));
+          }
       } 
   };
 
@@ -241,15 +297,14 @@ export default function ScannerScreen() {
       setCost(''); setSnackDeduction(''); setTax(''); setLiters(''); setPricePerUnit(''); setOdometer(''); 
       setShopHours(''); setShopRate(''); setPartsCost(''); setVendor(''); setNotes('');
       setReceiptPhoto(null); setOdometerPhoto(null); setEntryDate(new Date()); setIsFullTank(true);
-      
-      const defaultBiz = jobs.find((j: any) => j.name === 'General Business');
-      if (defaultBiz) { setSelectedJob(defaultBiz); setIsBusiness(true); }
+      setSelectedJob(null); 
+      setIsBusiness(true);
   };
 
   const handleSave = async () => {
     if (!cost) return Alert.alert("Missing Info", "Enter a receipt total.");
-    if (logType !== 'MATERIALS' && logType !== 'LABOUR' && !selectedVehicle) return Alert.alert("Missing Info", "Select a fleet item.");
-    if (!selectedJob) return Alert.alert("Missing Project", "Select a Project or Trip.");
+    const isDirectCost = ['MATERIALS', 'PERMITS', 'RENTALS', 'LABOUR'].includes(expenseCategory);
+    if (isDirectCost && !selectedJob) return Alert.alert("Missing Project", "Direct costs must be pinned to a Project ID.");
     
     setSaving(true);
     try {
@@ -272,24 +327,27 @@ export default function ScannerScreen() {
       }
 
       const finalCost = parseFloat(cost) - (parseFloat(snackDeduction) || 0);
+      const { data: { user } } = await supabase.auth.getUser();
       
       const payload = {
+        user_id: user?.id,
         created_at: entryDate.toISOString(), 
         cost: finalCost, 
         gst_amount: tax ? parseFloat(tax) : 0, 
         liters: liters ? parseFloat(liters) : null, 
-        odometer: odometer ? parseInt(odometer) : null, 
+        odometer: odometer && showOdometerField ? parseInt(odometer) : null, 
         hours: shopHours ? parseFloat(shopHours) : null, 
         hourly_rate: shopRate ? parseFloat(shopRate) : null,
         parts_cost: partsCost ? parseFloat(partsCost) : null,
         log_type: logType, 
+        expense_category: expenseCategory,
         vendor: vendor, 
         notes: notes, 
         is_business: isBusiness, 
-        vehicle_id: selectedVehicle?.id || null, 
-        vehicle_name: selectedVehicle?.name || null,
+        vehicle_id: showVehicleSelector && selectedVehicle ? selectedVehicle.id : null, 
+        vehicle_name: showVehicleSelector && selectedVehicle ? selectedVehicle.name : null,
         job_id: selectedJob?.id || null, 
-        job_name: selectedJob?.name || 'General', 
+        job_name: selectedJob?.name || (isBusiness ? 'General Overhead' : 'General Personal'), 
         currency: region === 'US' ? 'USD' : 'CAD',
         is_full_tank: isFullTank
       };
@@ -368,7 +426,7 @@ export default function ScannerScreen() {
                   <Ionicons name="receipt" size={24} color={receiptPhoto ? "#4CAF50" : "#FF9800"} style={{marginBottom: 8}}/>
                   <Text style={{color: receiptPhoto ? '#4CAF50' : '#FFF', fontWeight: 'bold', fontSize: 12, textAlign: 'center'}}>{receiptPhoto ? "RECEIPT SCANNED" : "SCAN RECEIPT"}</Text>
                </TouchableOpacity>
-               {logType !== 'MATERIALS' && logType !== 'LABOUR' && (
+               {showOdometerField && (
                    <TouchableOpacity style={[styles.fullWidthCameraBtn, odometerPhoto ? {borderColor: '#4CAF50'} : {borderColor: '#2196F3'}]} onPress={() => openCamera('odometer')}>
                       <Ionicons name="speedometer" size={24} color={odometerPhoto ? "#4CAF50" : "#2196F3"} style={{marginBottom: 8}}/>
                       <Text style={{color: odometerPhoto ? '#4CAF50' : '#FFF', fontWeight: 'bold', fontSize: 12, textAlign: 'center'}}>{odometerPhoto ? "ODOMETER SCANNED" : "SCAN ODOMETER"}</Text>
@@ -378,44 +436,66 @@ export default function ScannerScreen() {
         )}
 
         <View style={styles.card}>
-          <View style={styles.row}>
-             <TouchableOpacity style={[styles.toggleBtn, logType === 'FUEL' && styles.activeToggle]} onPress={() => handleToggleLogType('FUEL')}><Text style={styles.toggleText}>⛽ FUEL</Text></TouchableOpacity>
-             <TouchableOpacity style={[styles.toggleBtn, logType === 'MAINTENANCE' && styles.activeToggle]} onPress={() => handleToggleLogType('MAINTENANCE')}><Text style={styles.toggleText}>🔧 REPAIRS</Text></TouchableOpacity>
-             <TouchableOpacity style={[styles.toggleBtn, logType === 'MATERIALS' && styles.activeToggle]} onPress={() => handleToggleLogType('MATERIALS')}><Text style={styles.toggleText}>🧱 MATERIALS</Text></TouchableOpacity>
-             <TouchableOpacity style={[styles.toggleBtn, logType === 'LABOUR' && styles.activeToggle]} onPress={() => handleToggleLogType('LABOUR')}><Text style={styles.toggleText}>⏱️ LABOUR</Text></TouchableOpacity>
+          <Text style={styles.label}>EXPENSE CATEGORY</Text>
+          
+          <Text style={{color: '#666', fontSize: 10, fontWeight: 'bold', marginBottom: 8}}>📌 DIRECT JOB COSTS (Job Profitability)</Text>
+          <View style={styles.categoryGrid}>
+              <TouchableOpacity style={[styles.catBtn, expenseCategory === 'MATERIALS' && styles.activeToggle]} onPress={() => handleCategorySelect('MATERIALS', 'MATERIALS')}><Text style={styles.toggleText}>🧱 MATERIALS</Text></TouchableOpacity>
+              <TouchableOpacity style={[styles.catBtn, expenseCategory === 'PERMITS' && styles.activeToggle]} onPress={() => handleCategorySelect('PERMITS', 'MATERIALS')}><Text style={styles.toggleText}>📜 PERMITS</Text></TouchableOpacity>
+              <TouchableOpacity style={[styles.catBtn, expenseCategory === 'RENTALS' && styles.activeToggle]} onPress={() => handleCategorySelect('RENTALS', 'MATERIALS')}><Text style={styles.toggleText}>🏗️ RENTALS</Text></TouchableOpacity>
+              <TouchableOpacity style={[styles.catBtn, expenseCategory === 'LABOUR' && styles.activeToggle]} onPress={() => handleCategorySelect('LABOUR', 'LABOUR')}><Text style={styles.toggleText}>⏱️ LABOUR</Text></TouchableOpacity>
           </View>
-          <View style={[styles.row, {marginTop: 10}]}>
+
+          <Text style={{color: '#666', fontSize: 10, fontWeight: 'bold', marginTop: 12, marginBottom: 8}}>🏢 GENERAL OVERHEAD (Tax Deductions)</Text>
+          <View style={styles.categoryGrid}>
+              <TouchableOpacity style={[styles.catBtn, expenseCategory === 'FUEL' && styles.activeToggle]} onPress={() => handleCategorySelect('FUEL', 'FUEL')}><Text style={styles.toggleText}>⛽ FUEL & OIL</Text></TouchableOpacity>
+              <TouchableOpacity style={[styles.catBtn, expenseCategory === 'MAINTENANCE' && styles.activeToggle]} onPress={() => handleCategorySelect('MAINTENANCE', 'MAINTENANCE')}><Text style={styles.toggleText}>🔧 REPAIRS</Text></TouchableOpacity>
+              <TouchableOpacity style={[styles.catBtn, expenseCategory === 'INSURANCE' && styles.activeToggle]} onPress={() => handleCategorySelect('INSURANCE', 'MAINTENANCE')}><Text style={styles.toggleText}>🛡️ INSURANCE</Text></TouchableOpacity>
+              <TouchableOpacity style={[styles.catBtn, expenseCategory === 'TOOLS' && styles.activeToggle]} onPress={() => handleCategorySelect('TOOLS', 'MATERIALS')}><Text style={styles.toggleText}>🧰 TOOLS</Text></TouchableOpacity>
+              <TouchableOpacity style={[styles.catBtn, expenseCategory === 'ADMIN' && styles.activeToggle]} onPress={() => handleCategorySelect('ADMIN', 'MATERIALS')}><Text style={styles.toggleText}>💻 ADMIN/OFFICE</Text></TouchableOpacity>
+              <TouchableOpacity style={[styles.catBtn, expenseCategory === 'PARKING' && styles.activeToggle]} onPress={() => handleCategorySelect('PARKING', 'MATERIALS')}><Text style={styles.toggleText}>🅿️ PARKING/TOLLS</Text></TouchableOpacity>
+          </View>
+
+          <View style={[styles.row, {marginTop: 15}]}>
              <TouchableOpacity style={[styles.toggleBtn, isBusiness && styles.activeBiz]} onPress={() => handleBusinessToggle(true)}><Text style={styles.toggleText}>💼 BUSINESS</Text></TouchableOpacity>
              <TouchableOpacity style={[styles.toggleBtn, !isBusiness && styles.activePersonal]} onPress={() => handleBusinessToggle(false)}><Text style={styles.toggleText}>🏠 PERSONAL</Text></TouchableOpacity>
           </View>
 
-          {logType !== 'MATERIALS' && (
-             <>
-               <Text style={[styles.label, {marginTop: 15}]}>Select Fleet Item {logType === 'LABOUR' ? '(Optional)' : ''}</Text>
-               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillContainer}>
-               {vehicles.map((v: any) => (
-                   <TouchableOpacity key={v.id} style={[styles.pill, selectedVehicle?.id === v.id && styles.activeVehicle]} onPress={() => setSelectedVehicle(v)}>
-                       <Text style={styles.toggleText}>{v.is_equipment ? '🚜' : '🚙'} {v.name}</Text>
-                   </TouchableOpacity>
-               ))}
-               </ScrollView>
-             </>
-           )}
+          {showVehicleSelector && (
+              <>
+                <Text style={[styles.label, {marginTop: 15}]}>Select Fleet Item</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillContainer}>
+                {vehicles.map((v: any) => (
+                    <TouchableOpacity key={v.id} style={[styles.pill, selectedVehicle?.id === v.id && styles.activeVehicle]} onPress={() => setSelectedVehicle(v)}>
+                        <Text style={styles.toggleText}>{v.is_equipment ? '🚜' : '🚙'} {v.name}</Text>
+                    </TouchableOpacity>
+                ))}
+                </ScrollView>
+              </>
+          )}
 
-           <Text style={[styles.label, {marginTop: 15}]}>Select Project / Trip</Text>
+           <Text style={[styles.label, {marginTop: 15}]}>
+             Select Project / Trip {['MATERIALS', 'PERMITS', 'RENTALS', 'LABOUR'].includes(expenseCategory) ? '(Required)' : '(Optional - Overhead)'}
+           </Text>
            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillContainer}>
-              {filteredJobs.map((j: any) => (
+              {/* THE FIX: Permanent "None (General)" Pill to decouple expenses from specific jobs */}
+              <TouchableOpacity style={[styles.pill, !selectedJob && activeColor]} onPress={() => setSelectedJob(null)}>
+                  <Text style={styles.toggleText}>None (General)</Text>
+              </TouchableOpacity>
+              
+              {filteredJobs.filter((j: any) => j.name !== 'General Business' && j.name !== 'General Personal').map((j: any) => (
                 <TouchableOpacity key={j.id} style={[styles.pill, selectedJob?.id === j.id && activeColor]} onPress={() => setSelectedJob(j)}>
                    <Text style={styles.toggleText}>{j.name}</Text>
                 </TouchableOpacity>
               ))}
+              
               <TouchableOpacity style={[styles.pill, {backgroundColor: '#FF9800', marginLeft: 10}]} onPress={() => setIsAddingJob(true)}>
                  <Text style={[styles.toggleText, {color: '#000'}]}>+ ADD NEW</Text>
               </TouchableOpacity>
            </ScrollView>
         </View>
 
-        {logType !== 'MATERIALS' && logType !== 'LABOUR' && (
+        {showOdometerField && (
           <View style={styles.card}>
               <Text style={styles.label}>{selectedVehicle?.is_equipment ? 'Machine Hours' : 'Odometer Reading'}</Text>
               <TextInput style={styles.input} value={odometer} onChangeText={setOdometer} keyboardType="number-pad" placeholder={selectedVehicle?.is_equipment ? "Current hours" : "Current odometer"} placeholderTextColor="#666" />
@@ -428,24 +508,26 @@ export default function ScannerScreen() {
              <View style={{flex: 1}}><Text style={styles.label}>Deduct Non-Project ($)</Text><TextInput style={styles.input} value={snackDeduction} onChangeText={setSnackDeduction} onBlur={() => handleTriangleMath('cost', cost)} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor="#666" /></View>
           </View>
 
-          {logType !== 'LABOUR' && (
+          {expenseCategory !== 'LABOUR' && (
             <View style={{marginTop: 15}}>
                 <Text style={styles.label}>Tax ($)</Text>
                 <TextInput style={styles.input} value={tax} onChangeText={setTax} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor="#666" />
             </View>
           )}
 
-          {region === 'CA' && logType !== 'LABOUR' && (
+          {expenseCategory !== 'LABOUR' && (
             <View style={{flexDirection: 'row', marginTop: 10, gap: 5, flexWrap: 'wrap'}}>
-                <TouchableOpacity style={styles.taxBtn} onPress={() => calculateTax(0.05, 0.05)}><Text style={styles.taxText}>5% Tax (AB/Fuel)</Text></TouchableOpacity>
-                <TouchableOpacity style={styles.taxBtn} onPress={() => calculateTax(0.05, 0.12)}><Text style={styles.taxText}>12% Combo (BC/MB)</Text></TouchableOpacity>
-                <TouchableOpacity style={styles.taxBtn} onPress={() => calculateTax(0.13, 0.13)}><Text style={styles.taxText}>13% HST (ON)</Text></TouchableOpacity>
-                <TouchableOpacity style={styles.taxBtn} onPress={() => calculateTax(0.15, 0.15)}><Text style={styles.taxText}>15% HST (East)</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.taxBtn} onPress={() => calculateTax(tax1Rate / 100)}>
+                    <Text style={styles.taxText}>{tax1Rate}% Tax ({expenseCategory === 'FUEL' ? 'Inc.' : 'Add'})</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.taxBtn} onPress={() => calculateTax(tax2Rate / 100)}>
+                    <Text style={styles.taxText}>{tax2Rate}% Combo ({expenseCategory === 'FUEL' ? 'Inc.' : 'Add'})</Text>
+                </TouchableOpacity>
             </View>
           )}
         </View>
 
-        {logType === 'FUEL' && (
+        {expenseCategory === 'FUEL' && (
           <View style={[styles.card, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
             <View>
               <Text style={[styles.label, { marginBottom: 0, color: '#FFF' }]}>Filled to 100% Full?</Text>
@@ -456,37 +538,37 @@ export default function ScannerScreen() {
         )}
 
         <View style={styles.card}>
-           {logType === 'FUEL' && (
+           {expenseCategory === 'FUEL' && (
              <View style={{flexDirection: 'row', gap: 10, marginBottom: 15}}>
                 <View style={{flex: 1}}><Text style={styles.label}>Volume (Liters/Gals)</Text><TextInput style={styles.input} value={liters} onChangeText={setLiters} onBlur={() => handleTriangleMath('liters', liters)} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor="#666" /></View>
                 <View style={{flex: 1}}><Text style={styles.label}>Price per Unit</Text><TextInput style={styles.input} value={pricePerUnit} onChangeText={setPricePerUnit} onBlur={() => handleTriangleMath('price', pricePerUnit)} keyboardType="decimal-pad" placeholder="0.000" placeholderTextColor="#666" /></View>
              </View>
            )}
-           {logType === 'MAINTENANCE' && (
+           {expenseCategory === 'MAINTENANCE' && (
              <>
-                 <View style={{flexDirection: 'row', gap: 10, marginBottom: 15}}>
-                    <View style={{flex: 1}}><Text style={styles.label}>Shop Hours (Opt)</Text><TextInput style={styles.input} value={shopHours} onChangeText={setShopHours} keyboardType="decimal-pad" placeholder="e.g. 2.5" placeholderTextColor="#666" /></View>
-                    <View style={{flex: 1}}><Text style={styles.label}>Shop Rate ($)</Text><TextInput style={styles.input} value={shopRate} onChangeText={setShopRate} keyboardType="decimal-pad" placeholder="e.g. 120" placeholderTextColor="#666" /></View>
-                 </View>
-                 <View style={{width:'100%', marginTop: 5, marginBottom: 15}}>
-                     <Text style={styles.label}>Parts Cost ($)</Text>
-                     <TextInput style={styles.input} value={partsCost} onChangeText={setPartsCost} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor="#666"/>
-                 </View>
+                  <View style={{flexDirection: 'row', gap: 10, marginBottom: 15}}>
+                     <View style={{flex: 1}}><Text style={styles.label}>Shop Hours (Opt)</Text><TextInput style={styles.input} value={shopHours} onChangeText={setShopHours} keyboardType="decimal-pad" placeholder="e.g. 2.5" placeholderTextColor="#666" /></View>
+                     <View style={{flex: 1}}><Text style={styles.label}>Shop Rate ($)</Text><TextInput style={styles.input} value={shopRate} onChangeText={setShopRate} keyboardType="decimal-pad" placeholder="e.g. 120" placeholderTextColor="#666" /></View>
+                  </View>
+                  <View style={{width:'100%', marginTop: 5, marginBottom: 15}}>
+                      <Text style={styles.label}>Parts Cost ($)</Text>
+                      <TextInput style={styles.input} value={partsCost} onChangeText={setPartsCost} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor="#666"/>
+                  </View>
              </>
            )}
-           {logType === 'LABOUR' && (
+           {expenseCategory === 'LABOUR' && (
              <View style={{flexDirection: 'row', gap: 10, marginBottom: 15}}>
-                 <View style={{flex: 1}}>
-                     <Text style={styles.label}>Labour Hours</Text>
-                     <TextInput style={styles.input} value={shopHours} onChangeText={(v) => { setShopHours(v); if(shopRate) setCost((parseFloat(v||'0') * parseFloat(shopRate||'0')).toFixed(2)); }} keyboardType="decimal-pad" placeholder="e.g. 8.5" placeholderTextColor="#666" />
-                 </View>
-                 <View style={{flex: 1}}>
-                     <Text style={styles.label}>Hourly Rate ($)</Text>
-                     <TextInput style={styles.input} value={shopRate} onChangeText={(v) => { setShopRate(v); if(shopHours) setCost((parseFloat(shopHours||'0') * parseFloat(v||'0')).toFixed(2)); }} keyboardType="decimal-pad" placeholder="e.g. 65" placeholderTextColor="#666" />
-                 </View>
+                  <View style={{flex: 1}}>
+                      <Text style={styles.label}>Labour Hours</Text>
+                      <TextInput style={styles.input} value={shopHours} onChangeText={setShopHours} keyboardType="decimal-pad" placeholder="e.g. 8.5" placeholderTextColor="#666" />
+                  </View>
+                  <View style={{flex: 1}}>
+                      <Text style={styles.label}>Hourly Rate ($)</Text>
+                      <TextInput style={styles.input} value={shopRate} onChangeText={setShopRate} keyboardType="decimal-pad" placeholder="e.g. 65" placeholderTextColor="#666" />
+                  </View>
              </View>
            )}
-           <TextInput style={[styles.input, {marginBottom: 15}]} value={vendor} onChangeText={setVendor} placeholder={logType === 'LABOUR' ? "Client / Site" : "Location / Vendor"} placeholderTextColor="#666" />
+           <TextInput style={[styles.input, {marginBottom: 15}]} value={vendor} onChangeText={setVendor} placeholder={expenseCategory === 'LABOUR' ? "Client / Site" : "Location / Vendor"} placeholderTextColor="#666" />
            <TextInput style={styles.input} value={notes} onChangeText={setNotes} placeholder="Notes (Optional)" placeholderTextColor="#666" />
         </View>
 
@@ -524,13 +606,15 @@ const styles = StyleSheet.create({
   label: { color: '#888', fontSize: 12, fontWeight: 'bold', marginBottom: 8 },
   input: { backgroundColor: '#121212', color: '#FFF', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#333', fontSize: 16 },
   row: { flexDirection: 'row', gap: 10 },
+  categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  catBtn: { backgroundColor: '#333', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8, minWidth: '30%', flexGrow: 1, alignItems: 'center', justifyContent: 'center' },
   toggleBtn: { flex: 1, backgroundColor: '#333', paddingVertical: 12, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   toggleText: { color: '#FFF', fontWeight: 'bold', fontSize: 10, textAlign: 'center' },
   activeToggle: { backgroundColor: '#FF9800' }, activeBiz: { backgroundColor: '#4CAF50' }, activePersonal: { backgroundColor: '#9C27B0' }, activeVehicle: { backgroundColor: '#2196F3' },
   pillContainer: { flexDirection: 'row', marginBottom: 5 }, 
   pill: { backgroundColor: '#333', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20, marginRight: 10 },
   taxBtn: { flex: 1, backgroundColor: '#333', paddingVertical: 10, borderRadius: 6, alignItems: 'center', borderWidth: 1, borderColor: '#555', minWidth: '45%' }, 
-  taxText: { color: '#FF9800', fontSize: 10, fontWeight: 'bold', textAlign: 'center' },
+  taxText: { color: '#FF9800', fontSize: 12, fontWeight: 'bold', textAlign: 'center' },
   fullWidthCameraBtn: { flex: 1, backgroundColor: '#1E1E1E', padding: 15, borderRadius: 15, borderWidth: 2, borderColor: '#555', borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center' },
   saveBtn: { backgroundColor: '#FF9800', padding: 18, borderRadius: 10, alignItems: 'center', marginTop: 10 }, 
   saveText: { fontWeight: 'bold', color: '#000', fontSize: 16 },

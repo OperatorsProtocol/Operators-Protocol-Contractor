@@ -23,7 +23,7 @@ const SLIDES = [
   },
   {
     id: '3',
-    title: 'AUDIT-PROOF LOGS',
+    title: 'AUDIT-READY LOGS',
     description: 'Export CRA & IRS-ready Excel ledgers for your accountant in one tap. Print comprehensive digital service histories to maximize your fleet\'s resale value.',
     icon: 'document-text-outline',
     color: '#4CAF50'
@@ -34,14 +34,14 @@ export default function OnboardingScreen() {
   const router = useRouter();
   const [currentIndex, setCurrentIndex] = useState(0);
 
-  // Mark onboarding as complete and go directly to Paywall
+  // Mark onboarding as complete and go directly to Login so they can authenticate
   const completeOnboarding = async () => {
     try {
       await AsyncStorage.setItem('hasSeenOnboarding', 'true');
-      router.replace('/paywall'); 
+      router.replace('/login'); 
     } catch (error) {
       console.log('Error saving onboarding status:', error);
-      router.replace('/paywall'); // Failsafe: send to paywall anyway
+      router.replace('/login'); // Failsafe: send to login anyway
     }
   };
 

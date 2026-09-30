@@ -23,6 +23,13 @@ export default function DashboardScreen() {
   const fetchData = async () => {
     setRefreshing(true);
 
+    // 1. Session Guard (Prevents ghost data bug)
+    const { data: { user }, error: authErr } = await supabase.auth.getUser();
+    if (!user || authErr) {
+        await supabase.auth.signOut();
+        return;
+    }
+
     let logQuery = supabase.from('vehicle_logs').select('*');
 
     if (timeFrame === 'MONTH') {
@@ -62,17 +69,35 @@ export default function DashboardScreen() {
   else if (selectedJobFilter !== 'ALL') filteredLogs = filteredLogs.filter(l => l.job_id?.toString() === selectedJobFilter);
 
   let bizTotal = 0; let persTotal = 0; let gstTotal = 0;
-  let fuel = 0; let materials = 0; let labour = 0; let repair = 0;
+  
+  const categories = {
+      fuel: 0,
+      materials: 0,
+      labour: 0,
+      maintenance: 0,
+      tools: 0,
+      rentals: 0,
+      permits: 0,
+      insurance: 0,
+      admin: 0
+  };
 
   filteredLogs.forEach(l => {
       const cost = l.cost || 0;
       if (l.is_business) { bizTotal += cost; gstTotal += (l.gst_amount || 0); }
       else persTotal += cost;
 
-      if (l.log_type === 'FUEL') fuel += cost; 
-      else if (l.log_type === 'MATERIALS') materials += cost;
-      else if (l.log_type === 'LABOUR') labour += cost;
-      else if (l.log_type === 'MAINTENANCE') repair += cost;
+      const cat = l.expense_category || l.log_type;
+      
+      if (cat === 'FUEL') categories.fuel += cost; 
+      else if (cat === 'MATERIALS') categories.materials += cost;
+      else if (cat === 'LABOUR') categories.labour += cost;
+      else if (cat === 'MAINTENANCE') categories.maintenance += cost;
+      else if (cat === 'TOOLS') categories.tools += cost;
+      else if (cat === 'RENTALS') categories.rentals += cost;
+      else if (cat === 'PERMITS') categories.permits += cost;
+      else if (cat === 'INSURANCE') categories.insurance += cost;
+      else if (cat === 'ADMIN' || cat === 'PARKING') categories.admin += cost;
   });
 
   let roadDistance = 0; let roadLiters = 0; let roadSpend = 0;
@@ -82,29 +107,28 @@ export default function DashboardScreen() {
       if (selectedVehicle !== 'ALL' && v.id.toString() !== selectedVehicle) return;
       
       const vLogs = filteredLogs.filter(l => l.vehicle_id === v.id);
-      const vOdoLogs = vLogs.filter(l => l.odometer > 0);
       
-      // THIS IS THE MATH FIX: Only sum liters for MPG if the tank was actually marked full
-      const vFuelVol = vLogs
-        .filter(l => l.log_type === 'FUEL' && l.is_full_tank !== false)
-        .reduce((sum, l) => sum + (l.liters || 0), 0);
-        
-      const vTotalSpend = vLogs.reduce((sum, l) => sum + (l.cost || 0), 0);
-
-      let delta = 0;
+      const tripDistance = vLogs.filter(l => l.log_type === 'TRIP').reduce((sum, l) => sum + (l.distance || 0), 0);
+      
+      let odoDelta = 0;
+      const vOdoLogs = vLogs.filter(l => l.odometer > 0);
       if (vOdoLogs.length > 0) {
           const vMax = Math.max(...vOdoLogs.map(l => l.odometer));
           const vMin = Math.min(...vOdoLogs.map(l => l.odometer));
-          if (vMax > vMin) delta = vMax - vMin;
-          else if (vMax > (v.odometer || 0)) delta = vMax - (v.odometer || 0);
+          if (vMax > vMin) odoDelta = vMax - vMin;
       }
+      
+      const finalDelta = Math.max(tripDistance, odoDelta); 
+      
+      const vFuelVol = vLogs.filter(l => (l.expense_category === 'FUEL' || l.log_type === 'FUEL') && l.is_full_tank !== false).reduce((sum, l) => sum + (l.liters || 0), 0);
+      const vTotalSpend = vLogs.reduce((sum, l) => sum + (l.cost || 0), 0);
 
       if (v.is_equipment) {
-          equipHours += delta;
+          equipHours += finalDelta;
           equipLiters += vFuelVol;
           equipSpend += vTotalSpend;
       } else {
-          roadDistance += delta;
+          roadDistance += finalDelta;
           roadLiters += vFuelVol;
           roadSpend += vTotalSpend;
       }
@@ -135,9 +159,6 @@ export default function DashboardScreen() {
       
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
           <Text style={{ color: '#FFF', fontSize: 24, fontWeight: 'bold' }}>METRICS</Text>
-          <TouchableOpacity onPress={() => router.push('/settings')} style={{ padding: 5 }}>
-              <Ionicons name="settings-outline" size={28} color="#888" />
-          </TouchableOpacity>
       </View>
 
       <View style={styles.filterRow}>
@@ -231,10 +252,15 @@ export default function DashboardScreen() {
 
           <View style={styles.card}>
               <Text style={styles.cardTitle}>CATEGORY BREAKDOWN</Text>
-              <View style={styles.statRow}><Text style={styles.statLabel}>⛽ Fuel & Oil</Text><Text style={styles.statValue}>${fuel.toFixed(2)}</Text></View>
-              <View style={styles.statRow}><Text style={styles.statLabel}>🧱 Materials</Text><Text style={styles.statValue}>${materials.toFixed(2)}</Text></View>
-              <View style={styles.statRow}><Text style={styles.statLabel}>⏱️ Labour</Text><Text style={styles.statValue}>${labour.toFixed(2)}</Text></View>
-              <View style={styles.statRow}><Text style={styles.statLabel}>🔧 Repairs & Maint.</Text><Text style={styles.statValue}>${repair.toFixed(2)}</Text></View>
+              <View style={styles.statRow}><Text style={styles.statLabel}>⛽ Fuel & Oil</Text><Text style={styles.statValue}>${categories.fuel.toFixed(2)}</Text></View>
+              <View style={styles.statRow}><Text style={styles.statLabel}>🧱 Materials</Text><Text style={styles.statValue}>${categories.materials.toFixed(2)}</Text></View>
+              <View style={styles.statRow}><Text style={styles.statLabel}>🧰 Tools</Text><Text style={styles.statValue}>${categories.tools.toFixed(2)}</Text></View>
+              <View style={styles.statRow}><Text style={styles.statLabel}>⏱️ Labour</Text><Text style={styles.statValue}>${categories.labour.toFixed(2)}</Text></View>
+              <View style={styles.statRow}><Text style={styles.statLabel}>🔧 Maintenance & Repairs</Text><Text style={styles.statValue}>${categories.maintenance.toFixed(2)}</Text></View>
+              <View style={styles.statRow}><Text style={styles.statLabel}>🏗️ Rentals</Text><Text style={styles.statValue}>${categories.rentals.toFixed(2)}</Text></View>
+              <View style={styles.statRow}><Text style={styles.statLabel}>📜 Permits</Text><Text style={styles.statValue}>${categories.permits.toFixed(2)}</Text></View>
+              <View style={styles.statRow}><Text style={styles.statLabel}>🛡️ Insurance</Text><Text style={styles.statValue}>${categories.insurance.toFixed(2)}</Text></View>
+              <View style={styles.statRow}><Text style={styles.statLabel}>💻 Admin & Parking</Text><Text style={styles.statValue}>${categories.admin.toFixed(2)}</Text></View>
           </View>
 
       </ScrollView>

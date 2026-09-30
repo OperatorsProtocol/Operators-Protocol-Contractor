@@ -23,11 +23,15 @@ export default function JobsScreen() {
 
   const [isAddingJob, setIsAddingJob] = useState(false);
   const [newJobName, setNewJobName] = useState('');
+  const [newJobAddress, setNewJobAddress] = useState('');
+  const [newJobDistance, setNewJobDistance] = useState('');
   const [newJobIsBiz, setNewJobIsBiz] = useState(true);
 
   const [isEditingJob, setIsEditingJob] = useState(false);
   const [editJobId, setEditJobId] = useState<number | null>(null);
   const [editJobName, setEditJobName] = useState('');
+  const [editJobAddress, setEditJobAddress] = useState('');
+  const [editJobDistance, setEditJobDistance] = useState('');
   const [editJobIsBiz, setEditJobIsBiz] = useState(true);
 
   const [vaultJob, setVaultJob] = useState<any>(null);
@@ -44,7 +48,16 @@ export default function JobsScreen() {
 
   const fetchData = async () => {
     setRefreshing(true);
-    const { data: jData } = await supabase.from('jobs').select('*').eq('is_active', viewMode === 'ACTIVE').order('created_at', { ascending: false });
+
+    // 1. Session Guard (Prevents ghost data bug)
+    const { data: { user }, error: authErr } = await supabase.auth.getUser();
+    if (!user || authErr) {
+        await supabase.auth.signOut();
+        router.replace('/login');
+        return;
+    }
+
+    const { data: jData } = await supabase.from('jobs').select('*').eq('is_active', viewMode === 'ACTIVE').order('created_at', { ascending: true });
     const { data: lData } = await supabase.from('vehicle_logs').select('*').not('job_id', 'is', null).order('created_at', { ascending: false });
     const { data: vData } = await supabase.from('vehicles').select('*');
 
@@ -52,10 +65,16 @@ export default function JobsScreen() {
     if (lData) setAllLogs(lData);
 
     if (jData) {
-        setJobs(jData);
+        const sortedJobs = jData.sort((a, b) => {
+            if (a.name === 'General Overhead') return -1;
+            if (b.name === 'General Overhead') return 1;
+            return 0;
+        });
+
+        setJobs(sortedJobs);
         const stats: Record<number, any> = {};
         
-        jData.forEach((job: any) => {
+        sortedJobs.forEach((job: any) => {
             const jobLogs = lData ? lData.filter((l: any) => l.job_id === job.id) : [];
             
             const periodJobLogs = jobLogs.filter((l: any) => {
@@ -72,19 +91,29 @@ export default function JobsScreen() {
                 return true;
             });
 
-            let materials = 0; let fuel = 0; let repair = 0; let labour = 0;
+            let fuel = 0; let materials = 0; let tools = 0; let labour = 0; 
+            let maintenance = 0; let rentals = 0; let permits = 0; let insurance = 0; let admin = 0;
+
             periodJobLogs.forEach((log: any) => {
                 const cost = log.cost || 0;
-                if (log.log_type === 'MATERIALS') materials += cost;
-                else if (log.log_type === 'LABOUR') labour += cost;
-                else if (log.log_type === 'FUEL') fuel += cost;
-                else if (log.log_type === 'MAINTENANCE') repair += cost;
+                const cat = log.expense_category || log.log_type;
+                
+                if (cat === 'FUEL') fuel += cost;
+                else if (cat === 'MATERIALS') materials += cost;
+                else if (cat === 'TOOLS') tools += cost;
+                else if (cat === 'LABOUR') labour += cost;
+                else if (cat === 'MAINTENANCE') maintenance += cost;
+                else if (cat === 'RENTALS') rentals += cost;
+                else if (cat === 'PERMITS') permits += cost;
+                else if (cat === 'INSURANCE') insurance += cost;
+                else if (cat === 'ADMIN' || cat === 'PARKING') admin += cost;
             });
 
             let lifetimeTotal = 0;
             jobLogs.forEach((log: any) => lifetimeTotal += (log.cost || 0));
 
-            stats[job.id] = { materials, fuel, repair, labour, periodTotal: materials + fuel + repair + labour, lifetimeTotal };
+            const periodTotal = fuel + materials + tools + labour + maintenance + rentals + permits + insurance + admin;
+            stats[job.id] = { fuel, materials, tools, labour, maintenance, rentals, permits, insurance, admin, periodTotal, lifetimeTotal };
         });
         setJobStats(stats);
     }
@@ -97,6 +126,7 @@ export default function JobsScreen() {
   const handleNextMonth = () => setFilterDate(new Date(filterDate.getFullYear(), filterDate.getMonth() + 1, 1));
 
   const handleCompleteJob = (id: number, name: string) => {
+      if (name === 'General Overhead') return Alert.alert("Protected", "General Overhead cannot be completed.");
       Alert.alert("Complete", `Mark "${name}" as finished?`, [
           { text: "Cancel", style: "cancel" },
           { text: "Mark Complete", onPress: async () => { 
@@ -119,6 +149,7 @@ export default function JobsScreen() {
   };
 
   const handleDeleteJob = (id: number, name: string) => {
+      if (name === 'General Overhead') return Alert.alert("Protected", "General Overhead cannot be deleted.");
       Alert.alert("Delete", `WARNING: Deleting "${name}" removes it permanently.`, [
           { text: "Cancel", style: "cancel" },
           { text: "Delete", style: "destructive", onPress: async () => { 
@@ -131,21 +162,46 @@ export default function JobsScreen() {
 
   const handleSaveNewJob = async () => {
       if (!newJobName) return Alert.alert("Missing", "Please enter a name.");
-      const { error } = await supabase.from('jobs').insert([{ name: newJobName, is_business: newJobIsBiz, is_active: true }]);
+      
+      const { data: { user } } = await supabase.auth.getUser();
+
+      const payload = {
+          name: newJobName,
+          is_business: newJobIsBiz,
+          is_active: true,
+          address: newJobAddress || null,
+          default_distance: newJobDistance ? parseInt(newJobDistance) : null,
+          user_id: user?.id
+      };
+
+      const { error } = await supabase.from('jobs').insert([payload]);
       if (error) Alert.alert("Error", error.message);
-      else { setNewJobName(''); setIsAddingJob(false); fetchData(); }
+      else { 
+          setNewJobName(''); setNewJobAddress(''); setNewJobDistance('');
+          setIsAddingJob(false); fetchData(); 
+      }
   };
 
   const openEditJobModal = (job: any) => {
       setEditJobId(job.id);
       setEditJobName(job.name);
       setEditJobIsBiz(job.is_business);
+      setEditJobAddress(job.address || '');
+      setEditJobDistance(job.default_distance?.toString() || '');
       setIsEditingJob(true);
   };
 
   const handleUpdateJob = async () => {
       if (!editJobName || !editJobId) return;
-      const { error } = await supabase.from('jobs').update({ name: editJobName, is_business: editJobIsBiz }).eq('id', editJobId);
+
+      const payload = {
+          name: editJobName,
+          is_business: editJobIsBiz,
+          address: editJobAddress || null,
+          default_distance: editJobDistance ? parseInt(editJobDistance) : null
+      };
+
+      const { error } = await supabase.from('jobs').update(payload).eq('id', editJobId);
       if (error) Alert.alert("Error", error.message);
       else { setIsEditingJob(false); fetchData(); }
   };
@@ -157,15 +213,17 @@ export default function JobsScreen() {
   const handleSaveLabour = async () => {
       if (!hours || !rate) return Alert.alert("Missing Info", "Enter hours and rate.");
       setSavingLabour(true);
-      const calculatedCost = parseFloat(hours) * parseFloat(rate);
       
+      const { data: { user } } = await supabase.auth.getUser();
+
+      const calculatedCost = parseFloat(hours) * parseFloat(rate);
       const finalNotes = labourNotes ? `Labour: ${hours} hrs @ $${rate}/hr - ${labourNotes}` : `Labour: ${hours} hrs @ $${rate}/hr`;
 
       const { error } = await supabase.from('vehicle_logs').insert({
           created_at: labourDate.toISOString(), cost: calculatedCost, hours: parseFloat(hours), hourly_rate: parseFloat(rate),
-          log_type: 'LABOUR', is_business: selectedJob.is_business, job_id: selectedJob.id, job_name: selectedJob.name, 
+          log_type: 'LABOUR', expense_category: 'LABOUR', is_business: selectedJob.is_business, job_id: selectedJob.id, job_name: selectedJob.name, 
           vehicle_id: labourVehicle?.id || null, vehicle_name: labourVehicle?.name || null,
-          notes: finalNotes
+          notes: finalNotes, user_id: user?.id
       });
       if (error) Alert.alert("Error", error.message);
       else { setIsLabourModalVisible(false); fetchData(); }
@@ -198,14 +256,14 @@ export default function JobsScreen() {
       if (error || !data || data.length === 0) return Alert.alert("Empty", `No logs to export for this ${range}.`);
 
       let csv = `Name,${job.name}\nExport Date,${new Date().toLocaleDateString()}\nRange,${range}\n\n`;
-      csv += 'Date,Log Type,Total Cost,Tax Extracted,Currency,Vendor/Location,Notes,Digital Receipt Link\n';
+      csv += 'Date,Category,Total Cost,Tax Extracted,Currency,Vendor/Location,Notes,Digital Receipt Link\n';
       
       data.forEach(l => {
           const date = new Date(l.created_at).toISOString().split('T')[0];
-          let type = l.log_type || 'General';
-          if (type === 'MAINTENANCE') type = 'Vehicle Repairs & Maintenance';
-          if (type === 'MATERIALS') type = 'Materials & Supplies';
-          if (type === 'FUEL') type = 'Fuel & Oil';
+          let cat = l.expense_category || l.log_type || 'General';
+          if (cat === 'MAINTENANCE') cat = 'Maintenance & Repairs';
+          if (cat === 'MATERIALS') cat = 'Materials';
+          if (cat === 'FUEL') cat = 'Fuel & Oil';
 
           const cost = l.cost ? l.cost.toFixed(2) : '0.00';
           const gst = l.gst_amount ? l.gst_amount.toFixed(2) : '0.00';
@@ -213,7 +271,7 @@ export default function JobsScreen() {
           const vendor = (l.vendor || '').replace(/,/g, ' ');
           const notes = (l.notes || '').replace(/,/g, ' ');
           const receipt = l.receipt_url || 'No Image';
-          csv += `${date},${type},${cost},${gst},${currency},${vendor},${notes},${receipt}\n`;
+          csv += `${date},${cat},${cost},${gst},${currency},${vendor},${notes},${receipt}\n`;
       });
 
       const fileName = `${job.name.replace(/\s/g, '_')}_Ledger_${range}.csv`;
@@ -227,7 +285,9 @@ export default function JobsScreen() {
     <View style={styles.container}>
       <View style={[styles.headerContainer, {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}]}>
           <Text style={styles.header}>PROJECTS / TRIPS</Text>
-          <TouchableOpacity onPress={() => setIsAddingJob(true)}><Text style={{color: '#FF9800', fontWeight: 'bold', fontSize: 16}}>+ NEW</Text></TouchableOpacity>
+          <TouchableOpacity onPress={() => {
+              setNewJobName(''); setNewJobAddress(''); setNewJobDistance(''); setIsAddingJob(true);
+          }}><Text style={{color: '#FF9800', fontWeight: 'bold', fontSize: 16}}>+ NEW</Text></TouchableOpacity>
       </View>
 
       <View style={styles.toggleContainer}>
@@ -271,39 +331,46 @@ export default function JobsScreen() {
       <ScrollView contentContainerStyle={{ paddingBottom: 100 }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={fetchData} tintColor="#FF9800" />}>
           {jobs.length === 0 && !refreshing && <Text style={styles.emptyText}>No {viewMode.toLowerCase()} records found.</Text>}
           {jobs.map((job: any) => {
-              const stats = jobStats[job.id] || { materials: 0, fuel: 0, repair: 0, labour: 0, periodTotal: 0, lifetimeTotal: 0 };
+              const stats = jobStats[job.id] || { fuel: 0, materials: 0, tools: 0, labour: 0, maintenance: 0, rentals: 0, permits: 0, insurance: 0, admin: 0, periodTotal: 0, lifetimeTotal: 0 };
               const borderColor = job.is_business ? '#4CAF50' : '#9C27B0';
-              
               let spendLabel = timeFrame === 'MONTH' ? `${MONTHS[filterDate.getMonth()].toUpperCase()} SPEND` : timeFrame === '3_MONTHS' ? '90 DAY SPEND' : timeFrame === 'YEAR' ? 'YTD SPEND' : 'ALL-TIME SPEND';
 
               return (
                   <View key={job.id} style={[styles.jobCard, {borderLeftWidth: 4, borderLeftColor: borderColor}]}>
-                      
                       <View style={styles.jobHeader}>
-                          <View style={{flexDirection: 'row', alignItems: 'center'}}>
-                            <View>
-                                <Text style={[styles.jobTitle, viewMode === 'COMPLETED' && {color: '#888'}]}>{job.is_business ? '💼' : '🏠'} {job.name}</Text>
+                          <View style={{flexDirection: 'row', alignItems: 'center', flex: 1}}>
+                            <View style={{flex: 1}}>
+                                <Text style={[styles.jobTitle, viewMode === 'COMPLETED' && {color: '#888'}]} numberOfLines={1}>{job.is_business ? '💼' : '🏠'} {job.name}</Text>
                                 <Text style={{color: '#666', fontSize: 10, marginTop: 4, fontWeight: 'bold'}}>LIFETIME: ${stats.lifetimeTotal.toFixed(2)}</Text>
                             </View>
-                            <TouchableOpacity onPress={() => openEditJobModal(job)} style={{marginLeft: 15, padding: 5}}>
-                                <Ionicons name="pencil-outline" size={20} color="#888" />
-                            </TouchableOpacity>
+                            {job.name !== 'General Overhead' && (
+                                <TouchableOpacity onPress={() => openEditJobModal(job)} style={{marginLeft: 15, padding: 5}}>
+                                    <Ionicons name="pencil-outline" size={20} color="#888" />
+                                </TouchableOpacity>
+                            )}
                           </View>
 
-                          <View style={{alignItems: 'flex-end'}}>
+                          <View style={{alignItems: 'flex-end', marginLeft: 10}}>
                             <Text style={{color: '#888', fontSize: 10, fontWeight: 'bold', marginBottom: 2}}>{spendLabel}</Text>
                             <Text style={[styles.jobTotal, viewMode === 'COMPLETED' && {color: '#AAA'}]}>${stats.periodTotal.toFixed(2)}</Text>
                           </View>
                       </View>
 
+                      {job.address && <Text style={{color: '#888', fontSize: 12, marginBottom: 10}}>📍 {job.address} {job.default_distance ? `(${job.default_distance} dist)` : ''}</Text>}
+
                       <TouchableOpacity style={styles.vaultBtn} onPress={() => setVaultJob(job)}>
                           <Text style={styles.vaultBtnText}>🗄️ OPEN PROJECT VAULT</Text>
                       </TouchableOpacity>
                       
-                      <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>🧱 Materials</Text><Text style={styles.breakdownValue}>${stats.materials.toFixed(2)}</Text></View>
                       <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>⛽ Fuel & Oil</Text><Text style={styles.breakdownValue}>${stats.fuel.toFixed(2)}</Text></View>
-                      <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>🔧 Repairs</Text><Text style={styles.breakdownValue}>${stats.repair.toFixed(2)}</Text></View>
+                      <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>🧱 Materials</Text><Text style={styles.breakdownValue}>${stats.materials.toFixed(2)}</Text></View>
+                      <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>🧰 Tools</Text><Text style={styles.breakdownValue}>${stats.tools.toFixed(2)}</Text></View>
                       <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>⏱️ Labour</Text><Text style={styles.breakdownValue}>${stats.labour.toFixed(2)}</Text></View>
+                      <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>🔧 Maintenance & Repairs</Text><Text style={styles.breakdownValue}>${stats.maintenance.toFixed(2)}</Text></View>
+                      <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>🏗️ Rentals</Text><Text style={styles.breakdownValue}>${stats.rentals.toFixed(2)}</Text></View>
+                      <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>📜 Permits</Text><Text style={styles.breakdownValue}>${stats.permits.toFixed(2)}</Text></View>
+                      <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>🛡️ Insurance</Text><Text style={styles.breakdownValue}>${stats.insurance.toFixed(2)}</Text></View>
+                      <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>💻 Admin & Parking</Text><Text style={styles.breakdownValue}>${stats.admin.toFixed(2)}</Text></View>
 
                       <View style={styles.actionRow}>
                           {viewMode === 'ACTIVE' ? (
@@ -319,10 +386,12 @@ export default function JobsScreen() {
                           <TouchableOpacity style={styles.exportBtn} onPress={() => triggerExport(job)}><Ionicons name="download-outline" size={18} color="#000" /></TouchableOpacity>
                       </View>
                       
-                      <View style={{flexDirection: 'row', marginTop: 10, gap: 10}}>
-                         {viewMode === 'ACTIVE' && <TouchableOpacity style={styles.completeBtn} onPress={() => handleCompleteJob(job.id, job.name)}><Text style={styles.completeBtnText}>✓ FINISH</Text></TouchableOpacity>}
-                         <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDeleteJob(job.id, job.name)}><Ionicons name="trash" size={18} color="#FFF" /></TouchableOpacity>
-                      </View>
+                      {job.name !== 'General Overhead' && (
+                          <View style={{flexDirection: 'row', marginTop: 10, gap: 10}}>
+                             {viewMode === 'ACTIVE' && <TouchableOpacity style={styles.completeBtn} onPress={() => handleCompleteJob(job.id, job.name)}><Text style={styles.completeBtnText}>✓ FINISH</Text></TouchableOpacity>}
+                             <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDeleteJob(job.id, job.name)}><Ionicons name="trash" size={18} color="#FFF" /></TouchableOpacity>
+                          </View>
+                      )}
                   </View>
               );
           })}
@@ -338,29 +407,43 @@ export default function JobsScreen() {
 
                   <ScrollView style={{backgroundColor:'#121212', borderRadius:10, padding:10}}>
                       {allLogs.filter(l => l.job_id === vaultJob?.id).length === 0 ? <Text style={{color:'#666', textAlign:'center', marginTop:20}}>No records found.</Text> : null}
-                      {allLogs.filter(l => l.job_id === vaultJob?.id).map((log, index) => (
-                          <TouchableOpacity 
-                              key={index} 
-                              style={styles.logRow}
-                              onPress={() => {
-                                  const targetJobId = vaultJob.id.toString();
-                                  setVaultJob(null);
-                                  router.push({ pathname: '/(tabs)/history', params: { jobFilter: targetJobId } });
-                              }}
-                          >
-                              <View>
-                                  <Text style={styles.logDate}>{new Date(log.created_at).toLocaleDateString()} {log.vehicle_name ? `• ${log.vehicle_name}` : ''}</Text>
-                                  <Text style={styles.logType}>
-                                      {log.log_type === 'FUEL' ? '⛽ Fuel' : log.log_type === 'LABOUR' ? '⏱️ Labour' : log.log_type === 'MATERIALS' ? '🧱 Materials' : `🔧 ${log.notes || 'Repair'}`}
-                                  </Text>
-                              </View>
-                              <View style={{alignItems:'flex-end'}}>
-                                  <Text style={styles.logCost}>${log.cost.toFixed(2)}</Text>
-                                  {log.log_type === 'FUEL' && log.liters && <Text style={styles.logOdo}>{(log.cost / log.liters).toFixed(3)}/Vol</Text>}
-                                  {log.log_type === 'LABOUR' && log.hours && <Text style={styles.logOdo}>{log.hours} hrs @ ${log.hourly_rate}</Text>}
-                              </View>
-                          </TouchableOpacity>
-                      ))}
+                      {allLogs.filter(l => l.job_id === vaultJob?.id).map((log, index) => {
+                          const cat = log.expense_category || log.log_type;
+                          let icon = '📄';
+                          if (cat === 'FUEL') icon = '⛽';
+                          else if (cat === 'MAINTENANCE') icon = '🔧';
+                          else if (cat === 'MATERIALS') icon = '🧱';
+                          else if (cat === 'LABOUR') icon = '⏱️';
+                          else if (cat === 'PERMITS') icon = '📜';
+                          else if (cat === 'RENTALS') icon = '🏗️';
+                          else if (cat === 'INSURANCE') icon = '🛡️';
+                          else if (cat === 'TOOLS') icon = '🧰';
+                          else if (cat === 'ADMIN' || cat === 'PARKING') icon = '💻';
+
+                          return (
+                              <TouchableOpacity 
+                                  key={index} 
+                                  style={styles.logRow}
+                                  onPress={() => {
+                                      const targetJobId = vaultJob.id.toString();
+                                      setVaultJob(null);
+                                      router.push({ pathname: '/(tabs)/history', params: { jobFilter: targetJobId } });
+                                  }}
+                              >
+                                  <View>
+                                      <Text style={styles.logDate}>{new Date(log.created_at).toLocaleDateString()} {log.vehicle_name ? `• ${log.vehicle_name}` : ''}</Text>
+                                      <Text style={styles.logType}>
+                                          {icon} {cat.charAt(0) + cat.slice(1).toLowerCase()}
+                                      </Text>
+                                  </View>
+                                  <View style={{alignItems:'flex-end'}}>
+                                      <Text style={styles.logCost}>${log.cost.toFixed(2)}</Text>
+                                      {cat === 'FUEL' && log.liters && <Text style={styles.logOdo}>{(log.cost / log.liters).toFixed(3)}/Vol</Text>}
+                                      {cat === 'LABOUR' && log.hours && <Text style={styles.logOdo}>{log.hours} hrs @ ${log.hourly_rate}</Text>}
+                                  </View>
+                              </TouchableOpacity>
+                          );
+                      })}
                   </ScrollView>
               </View>
           </View>
@@ -428,7 +511,14 @@ export default function JobsScreen() {
                   </View>
 
                   <Text style={styles.label}>Name</Text>
-                  <TextInput style={[styles.input, {marginBottom: 20}]} value={newJobName} onChangeText={setNewJobName} placeholder={newJobIsBiz ? "e.g. Smith Reno" : "e.g. Oregon Roadtrip"} placeholderTextColor="#666" autoFocus />
+                  <TextInput style={[styles.input, {marginBottom: 10}]} value={newJobName} onChangeText={setNewJobName} placeholder={newJobIsBiz ? "e.g. Smith Reno" : "e.g. Oregon Roadtrip"} placeholderTextColor="#666" autoFocus />
+                  
+                  <Text style={styles.label}>Address (Optional)</Text>
+                  <TextInput style={[styles.input, {marginBottom: 10}]} value={newJobAddress} onChangeText={setNewJobAddress} placeholder="e.g. 123 Main St" placeholderTextColor="#666" />
+
+                  <Text style={styles.label}>Default Trip Distance (Optional)</Text>
+                  <TextInput style={[styles.input, {marginBottom: 20}]} value={newJobDistance} onChangeText={setNewJobDistance} placeholder="e.g. 15" keyboardType="number-pad" placeholderTextColor="#666" />
+
                   <TouchableOpacity onPress={handleSaveNewJob} style={[styles.saveBtn, {marginTop: 0, padding: 15}]}><Text style={styles.saveText}>SAVE DETAILS</Text></TouchableOpacity>
                   <TouchableOpacity onPress={() => setIsAddingJob(false)} style={{marginTop:15, alignItems:'center'}}><Text style={{color:'#666'}}>Cancel</Text></TouchableOpacity>
               </View>
@@ -450,7 +540,14 @@ export default function JobsScreen() {
                   </View>
 
                   <Text style={styles.label}>Name</Text>
-                  <TextInput style={[styles.input, {marginBottom: 20}]} value={editJobName} onChangeText={setEditJobName} placeholderTextColor="#666" />
+                  <TextInput style={[styles.input, {marginBottom: 10}]} value={editJobName} onChangeText={setEditJobName} placeholderTextColor="#666" />
+
+                  <Text style={styles.label}>Address (Optional)</Text>
+                  <TextInput style={[styles.input, {marginBottom: 10}]} value={editJobAddress} onChangeText={setEditJobAddress} placeholderTextColor="#666" />
+
+                  <Text style={styles.label}>Default Trip Distance (Optional)</Text>
+                  <TextInput style={[styles.input, {marginBottom: 20}]} value={editJobDistance} onChangeText={setEditJobDistance} keyboardType="number-pad" placeholderTextColor="#666" />
+
                   <TouchableOpacity onPress={handleUpdateJob} style={[styles.saveBtn, {marginTop: 0, padding: 15}]}><Text style={styles.saveText}>UPDATE DETAILS</Text></TouchableOpacity>
                   <TouchableOpacity onPress={() => setIsEditingJob(false)} style={{marginTop:15, alignItems:'center'}}><Text style={{color:'#666'}}>Cancel</Text></TouchableOpacity>
               </View>

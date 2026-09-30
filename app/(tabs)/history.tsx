@@ -20,12 +20,20 @@ export default function HistoryScreen() {
   const [uploadingId, setUploadingId] = useState<string | null>(null); 
   const [filterDate, setFilterDate] = useState(new Date());
   const [viewPhoto, setViewPhoto] = useState<string | null>(null);
+  
+  const [expandedId, setExpandedId] = useState<number | null>(null);
 
   const [selectedVehicle, setSelectedVehicle] = useState<string>('ALL');
   const [selectedJobFilter, setSelectedJobFilter] = useState<'ALL' | 'ALL_BIZ' | 'ALL_PERS' | string>('ALL');
 
   const fetchHistory = async () => {
     setRefreshing(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+        await supabase.auth.signOut();
+        return;
+    }
+
     const startOfMonth = new Date(filterDate.getFullYear(), filterDate.getMonth(), 1).toISOString();
     const endOfMonth = new Date(filterDate.getFullYear(), filterDate.getMonth() + 1, 0, 23, 59, 59, 999).toISOString();
 
@@ -141,17 +149,20 @@ export default function HistoryScreen() {
       if (error || !data || data.length === 0) return Alert.alert("Empty", `No logs to export for this selection.`);
 
       let csv = `Filtered Ledger Export\nExport Date,${new Date().toLocaleDateString()}\nRange,${range}\n\n`;
-      csv += 'Date,Log Type,Tax Category,Project/Job,Vehicle,Total Cost,Tax Extracted,Currency,Vendor/Location,Notes,Digital Receipt Link\n';
+      csv += 'Date,Category,Tax Category,Project/Job,Vehicle,Total Cost,Tax Extracted,Currency,Vendor/Location,Notes,Digital Receipt Link\n';
       
       data.forEach(l => {
           const date = new Date(l.created_at).toISOString().split('T')[0];
-          let type = l.log_type || 'General';
-          if (type === 'MAINTENANCE') type = 'Vehicle Repairs & Maintenance';
-          if (type === 'MATERIALS') type = 'Materials & Supplies';
-          if (type === 'FUEL') type = 'Fuel & Oil';
+          let cat = l.expense_category || l.log_type || 'General';
+          
+          if (cat === 'MAINTENANCE') cat = 'Vehicle Repairs & Maintenance';
+          if (cat === 'MATERIALS') cat = 'Materials & Supplies';
+          if (cat === 'FUEL') cat = 'Fuel & Oil';
+          if (cat === 'PERMITS') cat = 'Permits & Fees';
+          if (cat === 'RENTALS') cat = 'Equipment Rentals';
 
           const taxCat = l.is_business ? 'Business (Deductible)' : 'Personal';
-          const job = (l.job_name || 'General').replace(/,/g, ' ');
+          const job = (l.job_name || 'General Overhead').replace(/,/g, ' ');
           const vehicle = (l.vehicle_name || 'N/A').replace(/,/g, ' ');
           const cost = l.cost ? l.cost.toFixed(2) : '0.00';
           const gst = l.gst_amount ? l.gst_amount.toFixed(2) : '0.00';
@@ -160,7 +171,7 @@ export default function HistoryScreen() {
           const notes = (l.notes || '').replace(/,/g, ' ');
           const receipt = l.receipt_url || 'No Image Attached';
 
-          csv += `${date},${type},${taxCat},${job},${vehicle},${cost},${gst},${currency},${vendor},${notes},${receipt}\n`;
+          csv += `${date},${cat},${taxCat},${job},${vehicle},${cost},${gst},${currency},${vendor},${notes},${receipt}\n`;
       });
 
       const fileName = `Operators_Protocol_Filtered_${range}.csv`;
@@ -179,65 +190,98 @@ export default function HistoryScreen() {
   else if (selectedJobFilter !== 'ALL') filteredLogs = filteredLogs.filter(l => l.job_id?.toString() === selectedJobFilter);
 
   const renderLog = ({ item }: any) => {
+    const isExpanded = expandedId === item.id;
     const borderColor = item.is_business ? '#4CAF50' : '#9C27B0'; 
-    const isFuel = item.log_type === 'FUEL';
+    const isFuel = item.expense_category === 'FUEL' || item.log_type === 'FUEL';
     const pricePerUnit = (isFuel && item.liters && item.cost) ? (item.cost / item.liters).toFixed(3) : null;
 
+    const cat = item.expense_category || item.log_type;
+    let icon = '📄';
+    let displayLabel = cat;
+    
+    if (cat === 'FUEL') { icon = '⛽'; displayLabel = 'Fuel & Oil'; }
+    else if (cat === 'MAINTENANCE') { icon = '🔧'; displayLabel = 'Repairs & Maint.'; }
+    else if (cat === 'MATERIALS') { icon = '🧱'; displayLabel = 'Materials'; }
+    else if (cat === 'LABOUR') { icon = '⏱️'; displayLabel = 'Labour'; }
+    else if (cat === 'PERMITS') { icon = '📜'; displayLabel = 'Permits'; }
+    else if (cat === 'RENTALS') { icon = '🏗️'; displayLabel = 'Rentals'; }
+    else if (cat === 'INSURANCE') { icon = '🛡️'; displayLabel = 'Insurance'; }
+    else if (cat === 'TOOLS') { icon = '🧰'; displayLabel = 'Tools'; }
+    else if (cat === 'ADMIN') { icon = '💻'; displayLabel = 'Admin / Office'; }
+
     return (
-      <View style={[styles.card, { borderLeftColor: borderColor }]}>
+      <TouchableOpacity 
+         style={[styles.card, { borderLeftColor: borderColor }]} 
+         activeOpacity={0.8} 
+         onPress={() => setExpandedId(isExpanded ? null : item.id)}
+      >
         <View style={styles.row}>
-            <View>
-                <Text style={styles.date}>{new Date(item.created_at).toLocaleDateString()} • {item.vehicle_name || 'No Vehicle'}</Text>
+            <View style={{ flex: 1 }}>
+                <Text style={styles.date}>{new Date(item.created_at).toLocaleDateString()} {item.vehicle_name ? `• ${item.vehicle_name}` : ''}</Text>
                 <Text style={[styles.jobTag, {color: borderColor}]}>
                     {item.is_business ? "💼 BUSINESS" : "🏠 PERSONAL"}
-                    {item.job_name ? ` • ${item.job_name}` : ''}
+                    {item.job_name ? ` • ${item.job_name}` : ' • General Overhead'}
                 </Text>
             </View>
-            <View style={{alignItems: 'flex-end', flexDirection: 'row'}}>
-                <TouchableOpacity onPress={() => editLog(item.id)} style={{marginRight: 15, marginTop: 5}}>
-                    <Ionicons name="pencil-outline" size={20} color="#888" />
-                </TouchableOpacity>
+            <View style={{alignItems: 'flex-end', flexDirection: 'row', gap: 10}}>
                 <View style={{alignItems: 'flex-end'}}>
                     <Text style={styles.cost}>${item.cost.toFixed(2)}</Text>
-                    <TouchableOpacity onPress={() => handleDeleteLog(item.id)} style={{marginTop: 8}}>
-                        <Ionicons name="trash-outline" size={18} color="#FF5252" />
-                    </TouchableOpacity>
+                    <Text style={styles.detailText}>{icon} {displayLabel}</Text>
                 </View>
+                <Ionicons name={isExpanded ? "chevron-up" : "chevron-down"} size={20} color="#666" style={{marginTop: 5}} />
             </View>
         </View>
         
-        {item.vendor ? <Text style={styles.vendor}>📍 {item.vendor}</Text> : null}
-        {item.notes ? <Text style={styles.notes}>"{item.notes}"</Text> : null}
+        {isExpanded && (
+            <View style={styles.expandedSection}>
+                {item.vendor ? <Text style={styles.vendor}>📍 {item.vendor}</Text> : null}
+                {item.notes ? <Text style={styles.notes}>"{item.notes}"</Text> : null}
 
-        <View style={styles.footer}>
-             <Text style={styles.detailText}>
-                 {isFuel ? `⛽ Fuel: ${item.liters || 0} Vol ${pricePerUnit ? `($${pricePerUnit}/Vol)` : ''}` : item.log_type === 'LABOUR' ? `⏱️ LABOUR` : item.log_type === 'MAINTENANCE' ? `🔧 REPAIRS & MAINT.` : `🧱 MATERIALS & SUPPLIES`}
-             </Text>
-             <Text style={styles.detailText}>{item.odometer ? `${item.odometer} dist` : ''}</Text>
-        </View>
+                <View style={styles.metricsGrid}>
+                    {item.gst_amount > 0 && <Text style={styles.metricItem}>Tax: ${item.gst_amount.toFixed(2)}</Text>}
+                    {item.liters > 0 && <Text style={styles.metricItem}>Vol: {item.liters}</Text>}
+                    {pricePerUnit && <Text style={styles.metricItem}>Price: ${pricePerUnit}</Text>}
+                    {item.hours > 0 && <Text style={styles.metricItem}>Hours: {item.hours}</Text>}
+                    {item.hourly_rate > 0 && <Text style={styles.metricItem}>Rate: ${item.hourly_rate}</Text>}
+                    {item.parts_cost > 0 && <Text style={styles.metricItem}>Parts: ${item.parts_cost.toFixed(2)}</Text>}
+                    {item.odometer > 0 && <Text style={styles.metricItem}>Odo: {item.odometer}</Text>}
+                </View>
 
-        <View style={{flexDirection: 'row', marginTop: 10}}>
-            {item.receipt_url ? (
-                <TouchableOpacity style={[styles.receiptBtn, {backgroundColor: borderColor, marginRight: 10}]} onPress={() => setViewPhoto(item.receipt_url)}>
-                    <Text style={styles.btnText}>📄 RECEIPT</Text>
-                </TouchableOpacity>
-            ) : (
-                <TouchableOpacity style={[styles.receiptBtn, styles.dashedBtn, {marginRight: 10}]} onPress={() => handleAttachPhoto(item.id, 'receipt')} disabled={uploadingId === `${item.id}-receipt`}>
-                    {uploadingId === `${item.id}-receipt` ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={styles.btnText}>📎 ATTACH</Text>}
-                </TouchableOpacity>
-            )}
-            
-            {item.odometer_image ? (
-                <TouchableOpacity style={[styles.receiptBtn, {backgroundColor: '#555'}]} onPress={() => setViewPhoto(item.odometer_image)}>
-                    <Text style={styles.btnText}>📸 ODO PIC</Text>
-                </TouchableOpacity>
-            ) : item.log_type !== 'MATERIALS' && item.log_type !== 'LABOUR' ? (
-                <TouchableOpacity style={[styles.receiptBtn, styles.dashedBtn]} onPress={() => handleAttachPhoto(item.id, 'odometer')} disabled={uploadingId === `${item.id}-odometer`}>
-                    {uploadingId === `${item.id}-odometer` ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={styles.btnText}>📎 ODO PIC</Text>}
-                </TouchableOpacity>
-            ) : null}
-        </View>
-      </View>
+                <View style={{flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, alignItems: 'center'}}>
+                    <View style={{flexDirection: 'row', flex: 1}}>
+                        {item.receipt_url ? (
+                            <TouchableOpacity style={[styles.receiptBtn, {backgroundColor: borderColor, marginRight: 10}]} onPress={() => setViewPhoto(item.receipt_url)}>
+                                <Text style={styles.btnText}>📄 RECEIPT</Text>
+                            </TouchableOpacity>
+                        ) : (
+                            <TouchableOpacity style={[styles.receiptBtn, styles.dashedBtn, {marginRight: 10}]} onPress={() => handleAttachPhoto(item.id, 'receipt')} disabled={uploadingId === `${item.id}-receipt`}>
+                                {uploadingId === `${item.id}-receipt` ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={styles.btnText}>📎 ATTACH</Text>}
+                            </TouchableOpacity>
+                        )}
+                        
+                        {item.odometer_image ? (
+                            <TouchableOpacity style={[styles.receiptBtn, {backgroundColor: '#555', marginRight: 10}]} onPress={() => setViewPhoto(item.odometer_image)}>
+                                <Text style={styles.btnText}>📸 ODO PIC</Text>
+                            </TouchableOpacity>
+                        ) : (item.odometer && (item.expense_category === 'FUEL' || item.expense_category === 'MAINTENANCE')) ? (
+                            <TouchableOpacity style={[styles.receiptBtn, styles.dashedBtn, {marginRight: 10}]} onPress={() => handleAttachPhoto(item.id, 'odometer')} disabled={uploadingId === `${item.id}-odometer`}>
+                                {uploadingId === `${item.id}-odometer` ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={styles.btnText}>📎 ODO PIC</Text>}
+                            </TouchableOpacity>
+                        ) : null}
+                    </View>
+
+                    <View style={{flexDirection: 'row', gap: 15}}>
+                        <TouchableOpacity onPress={() => editLog(item.id)} style={{padding: 5}}>
+                            <Ionicons name="pencil-outline" size={20} color="#FF9800" />
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => handleDeleteLog(item.id)} style={{padding: 5}}>
+                            <Ionicons name="trash-outline" size={20} color="#FF5252" />
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </View>
+        )}
+      </TouchableOpacity>
     );
   };
 
@@ -312,13 +356,15 @@ const styles = StyleSheet.create({
   pillTextActive: { color: '#000' },
   emptyText: { color: '#666', textAlign: 'center', marginTop: 40, fontSize: 16 },
   card: { backgroundColor: '#1E1E1E', padding: 20, borderRadius: 15, marginBottom: 15, borderLeftWidth: 5 },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 },
+  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   date: { color: '#888', fontSize: 12, marginBottom: 4 }, jobTag: { fontSize: 10, fontWeight: 'bold', marginTop: 2 },
   cost: { color: '#FFF', fontSize: 24, fontWeight: 'bold' }, vendor: { color: '#AAA', fontSize: 12, marginBottom: 4, fontWeight: 'bold' },
   notes: { color: '#CCC', fontStyle: 'italic', marginBottom: 10, fontSize: 14 },
-  footer: { flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: '#333', paddingTop: 10 },
-  detailText: { color: '#888', fontSize: 12, fontWeight: 'bold' },
-  receiptBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6, alignItems: 'center', justifyContent: 'center', flex: 1 },
+  expandedSection: { marginTop: 15, borderTopWidth: 1, borderTopColor: '#333', paddingTop: 15 },
+  metricsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 10 },
+  metricItem: { backgroundColor: '#121212', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 4, color: '#888', fontSize: 11, fontWeight: 'bold', borderWidth: 1, borderColor: '#333' },
+  detailText: { color: '#888', fontSize: 12, fontWeight: 'bold', marginTop: 4 },
+  receiptBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 6, alignItems: 'center', justifyContent: 'center' },
   dashedBtn: { backgroundColor: '#333', borderWidth: 1, borderColor: '#555', borderStyle: 'dashed' },
   btnText: { color: '#FFF', fontSize: 10, fontWeight: 'bold' },
   modalBackground: { flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', alignItems: 'center' },

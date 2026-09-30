@@ -3,7 +3,6 @@ import { Tabs } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function TabLayout() {
-  // This automatically measures the height of the Android 3-buttons or iPhone notch
   const insets = useSafeAreaInsets(); 
 
   return (
@@ -13,9 +12,7 @@ export default function TabLayout() {
         tabBarStyle: {
           backgroundColor: '#1E1E1E',
           borderTopColor: '#333',
-          // Base height of 60 PLUS the exact height of the system buttons
           height: 60 + insets.bottom,
-          // Push the icons up by the exact height of the system buttons
           paddingBottom: insets.bottom,
         },
         tabBarActiveTintColor: '#FF9800',
@@ -27,6 +24,13 @@ export default function TabLayout() {
         options={{
           title: 'Scanner',
           tabBarIcon: ({ color, size }) => <Ionicons name="scan" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="trips"
+        options={{
+          title: 'Trips',
+          tabBarIcon: ({ color, size }) => <Ionicons name="navigate" size={size} color={color} />,
         }}
       />
       <Tabs.Screen
@@ -53,7 +57,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="vehicles"
         options={{
-          title: 'Fleet',
+          title: 'Fleet/Prefs',
           tabBarIcon: ({ color, size }) => <Ionicons name="car-sport" size={size} color={color} />,
         }}
       />

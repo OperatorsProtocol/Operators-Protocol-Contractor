@@ -10,10 +10,16 @@ export default function LoginScreen() {
   const [isSignUp, setIsSignUp] = useState(false);
 
   async function handleAuth() {
-    if (!email || !password) return Alert.alert('Missing Info', 'Please enter your email and password.');
+    if (!email) return Alert.alert('Missing Info', 'Please enter your email address.');
+    if (!isSignUp && !password) return Alert.alert('Missing Info', 'Please enter your password.');
+    
     setLoading(true);
 
     if (isSignUp) {
+      if (!password) {
+        setLoading(false);
+        return Alert.alert('Missing Info', 'Please enter a password to sign up.');
+      }
       const { error } = await supabase.auth.signUp({ email, password });
       if (error) Alert.alert('Sign Up Failed', error.message);
       else {
@@ -27,6 +33,25 @@ export default function LoginScreen() {
       else router.replace('/(tabs)');
     }
     setLoading(false);
+  }
+
+  async function handleForgotPassword() {
+    if (!email) {
+      return Alert.alert('Enter Email', 'Please enter your email address above first, then tap Forgot Password.');
+    }
+
+    try {
+      setLoading(true);
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: 'operators-protocol://',
+      });
+      if (error) throw error;
+      Alert.alert('Reset Link Sent', 'Check your email for the password reset link.');
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to send password reset email.');
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -49,6 +74,12 @@ export default function LoginScreen() {
           {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.authBtnText}>{isSignUp ? 'INITIALIZE ACCOUNT' : 'ACCESS VAULT'}</Text>}
         </TouchableOpacity>
 
+        {!isSignUp && (
+          <TouchableOpacity onPress={handleForgotPassword} style={styles.forgotContainer}>
+            <Text style={styles.forgotText}>Forgot Password?</Text>
+          </TouchableOpacity>
+        )}
+
         <TouchableOpacity onPress={() => setIsSignUp(!isSignUp)} style={styles.toggleContainer}>
           <Text style={styles.toggleText}>{isSignUp ? 'Already have an account? Sign In' : 'Need an account? Sign Up'}</Text>
         </TouchableOpacity>
@@ -68,5 +99,8 @@ const styles = StyleSheet.create({
   input: { backgroundColor: '#121212', color: '#FFF', padding: 15, borderRadius: 8, borderWidth: 1, borderColor: '#333', fontSize: 16, marginBottom: 20 },
   authBtn: { backgroundColor: '#FF9800', padding: 18, borderRadius: 10, alignItems: 'center', marginTop: 10 },
   authBtnText: { fontWeight: 'bold', color: '#000', fontSize: 16, letterSpacing: 1 },
-  toggleContainer: { marginTop: 25, alignItems: 'center' }, toggleText: { color: '#888', fontWeight: 'bold', fontSize: 14 },
+  forgotContainer: { marginTop: 15, alignItems: 'center' },
+  forgotText: { color: '#FF9800', fontSize: 13, fontWeight: 'bold' },
+  toggleContainer: { marginTop: 25, alignItems: 'center' }, 
+  toggleText: { color: '#888', fontWeight: 'bold', fontSize: 14 },
 });
