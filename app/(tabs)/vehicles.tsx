@@ -18,6 +18,7 @@ export default function FleetAndSettingsScreen() {
   const [selectedCar, setSelectedCar] = useState<any>(null); 
   const [isEditing, setIsEditing] = useState(false); 
   const [logFilter, setLogFilter] = useState<'ALL' | 'SERVICE'>('ALL'); 
+  const [expandedLogId, setExpandedLogId] = useState<any>(null);
   
   const [formName, setFormName] = useState('');
   const [formMake, setFormMake] = useState('');
@@ -53,10 +54,8 @@ export default function FleetAndSettingsScreen() {
           if (t2) setTax2Rate(t2);
           if (reg) setDefaultRegion(reg as 'CA' | 'US');
 
-          // Fetch Quick Locations from Cloud (Synced with Trips tab)
           const { data: locs, error } = await supabase.from('quick_locations').select('*').order('created_at', { ascending: true });
           if (locs) setSavedLocations(locs);
-
       } catch (e) { console.log("Failed to load settings", e); }
   };
 
@@ -107,7 +106,6 @@ export default function FleetAndSettingsScreen() {
       setSavedLocations(savedLocations.filter(loc => loc.id !== id));
   };
 
-  // --- AUTH ACTIONS (LOGOUT & DELETE) ---
   const handleLogout = async () => {
     Alert.alert("Log Out", "Are you sure you want to log out?", [
       { text: "Cancel", style: "cancel" },
@@ -159,11 +157,9 @@ export default function FleetAndSettingsScreen() {
     );
   };
 
-  // FLEET LOGIC
   const fetchGarage = async () => {
     setRefreshing(true);
 
-    // 1. Session Guard (Prevents ghost data bug)
     const { data: { user }, error: authErr } = await supabase.auth.getUser();
     if (!user || authErr) {
         await supabase.auth.signOut();
@@ -180,26 +176,18 @@ export default function FleetAndSettingsScreen() {
             const cTrips = cLogs.filter(l => l.log_type === 'TRIP');
             const fuelLogs = cLogs.filter(l => (l.expense_category || l.log_type) === 'FUEL');
             
-            // 1. Establish Start and Current Odometer
             const startOdo = car.odometer || 0;
             const maxLogOdo = cLogs.length > 0 ? Math.max(...cLogs.map(l => l.odometer || 0)) : 0;
             const currentOdo = Math.max(startOdo, maxLogOdo);
             
-            // 2. Total Distance Driven (Delta)
             const totalDistanceDriven = Math.max(0, currentOdo - startOdo);
-
-            // 3. Business Use (Explicitly Logged)
             const bizDist = cTrips.filter(t => t.is_business).reduce((sum, t) => sum + (t.distance || 0), 0);
-            
-            // 4. Personal Use (Everything Else)
             const persDist = Math.max(0, totalDistanceDriven - bizDist);
             
-            // 5. Calculate Final Percentages
             const effectiveTotal = bizDist + persDist;
             const bizPercent = effectiveTotal > 0 ? Math.round((bizDist / effectiveTotal) * 100) : 0;
             const persPercent = effectiveTotal > 0 ? 100 - bizPercent : 0;
             
-            // 6. Fuel Economy Calculation
             let fuelEcon = 'N/A';
             const distanceDriven = currentOdo - startOdo;
             if (distanceDriven > 0 && fuelLogs.length > 0 && !car.is_equipment) {
@@ -320,7 +308,10 @@ export default function FleetAndSettingsScreen() {
   };
 
   const openDetails = async (car: any) => {
-      setSelectedCar(car); setIsEditing(false); setLogFilter('ALL');
+      setSelectedCar(car); 
+      setIsEditing(false); 
+      setLogFilter('ALL');
+      setExpandedLogId(null); 
       const { data } = await supabase.from('vehicle_logs').select('*').eq('vehicle_id', car.id).order('created_at', { ascending: false });
       setCarLogs(data || []);
   };
@@ -437,6 +428,10 @@ export default function FleetAndSettingsScreen() {
                     <View style={styles.stat}>
                         <Text style={styles.statLabel}>{item.is_equipment ? 'MACHINE HOURS' : 'ODOMETER'}</Text>
                         <Text style={styles.statValue}>{item.currentOdo.toLocaleString()} {distUnit}</Text>
+                        
+                        {!item.is_equipment && item.fuelEcon && item.fuelEcon !== 'N/A' && (
+                            <Text style={{color: '#4CAF50', fontSize: 11, fontWeight: 'bold', marginTop: 4}}>⛽ {item.fuelEcon}</Text>
+                        )}
                     </View>
                     <View style={[styles.stat, {alignItems: 'flex-end', flex: 1.2}]}>
                         <Text style={styles.statLabel}>SERVICE STATUS</Text>
@@ -603,7 +598,7 @@ export default function FleetAndSettingsScreen() {
 
                   <View style={{flexDirection:'row', justifyContent:'space-between', marginBottom: 15}}>
                       <TouchableOpacity style={[styles.actionBtn, {backgroundColor:'#333', width: '48%'}]} onPress={() => handleResetService(selectedCar)}>
-                          <Text style={{color:'#FFF', fontWeight:'bold', fontSize:12}}>🛠️️ LOG SERVICE</Text>
+                          <Text style={{color:'#FFF', fontWeight:'bold', fontSize:12}}>🛠 LOG SERVICE</Text>
                       </TouchableOpacity>
                       <TouchableOpacity style={[styles.actionBtn, {width: '48%'}]} onPress={triggerExport}>
                           <Text style={{color:'#000', fontWeight:'bold', fontSize:12}}>📤 EXPORT {logFilter}</Text>
@@ -621,6 +616,7 @@ export default function FleetAndSettingsScreen() {
 
                   <ScrollView style={{backgroundColor:'#121212', borderRadius:10, padding:10}}>
                       {carLogs.filter(l => logFilter === 'ALL' || (l.expense_category || l.log_type) === 'MAINTENANCE').length === 0 ? <Text style={{color:'#666', textAlign:'center', marginTop:20}}>No records found.</Text> : null}
+                      
                       {carLogs.filter(l => logFilter === 'ALL' || (l.expense_category || l.log_type) === 'MAINTENANCE').map((log, index) => {
                           const cat = log.expense_category || log.log_type || 'General';
                           let icon = '📄';
@@ -637,16 +633,39 @@ export default function FleetAndSettingsScreen() {
                           else if (cat === 'RENTALS') { icon = '🏗️'; displayLabel = 'Rentals'; }
 
                           return (
-                              <View key={index} style={styles.logRow}>
-                                  <View>
-                                      <Text style={styles.logDate}>{new Date(log.created_at).toLocaleDateString()}</Text>
-                                      <Text style={styles.logType}>{icon} {displayLabel}</Text>
+                              <TouchableOpacity 
+                                key={log.id || index} 
+                                style={{ borderBottomWidth: 1, borderBottomColor: '#333', paddingVertical: 10 }}
+                                onPress={() => setExpandedLogId(expandedLogId === log.id ? null : log.id)}
+                              >
+                                  <View style={{flexDirection: 'row', justifyContent: 'space-between'}}>
+                                      <View>
+                                          <Text style={styles.logDate}>{new Date(log.created_at).toLocaleDateString()}</Text>
+                                          <Text style={styles.logType}>{icon} {displayLabel}</Text>
+                                      </View>
+                                      <View style={{alignItems:'flex-end'}}>
+                                          <Text style={styles.logCost}>${log.cost ? log.cost.toFixed(2) : '0.00'}</Text>
+                                          <Text style={styles.logOdo}>{log.odometer || 0} {selectedCar?.is_equipment ? 'hrs' : (selectedCar?.distance_unit || 'km')}</Text>
+                                      </View>
                                   </View>
-                                  <View style={{alignItems:'flex-end'}}>
-                                      <Text style={styles.logCost}>${log.cost.toFixed(2)}</Text>
-                                      <Text style={styles.logOdo}>{log.odometer} {selectedCar?.is_equipment ? 'hrs' : (selectedCar?.distance_unit || 'km')}</Text>
-                                  </View>
-                              </View>
+                                  
+                                  {/* --- NEW HIGHLIGHTED ODOMETER IN EXPANDED VIEW --- */}
+                                  {expandedLogId === log.id && (
+                                      <View style={{marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#333'}}>
+                                          <Text style={{color: '#FF9800', fontSize: 13, fontWeight: 'bold', marginBottom: 6}}>
+                                              {selectedCar?.is_equipment ? 'Machine Hours at Service:' : 'Odometer at Service:'} {log.odometer ? log.odometer.toLocaleString() : 'Not Recorded'} {selectedCar?.is_equipment ? 'hrs' : (selectedCar?.distance_unit || 'km')}
+                                          </Text>
+                                          {log.vendor ? <Text style={{color: '#CCC', fontSize: 12, marginBottom: 4}}>Vendor: {log.vendor}</Text> : null}
+                                          {log.notes ? <Text style={{color: '#CCC', fontSize: 12, marginBottom: 4}}>Notes: {log.notes}</Text> : null}
+                                          {log.receipt_url ? (
+                                              <TouchableOpacity onPress={() => Linking.openURL(log.receipt_url)} style={{marginTop: 10, marginBottom: 4}}>
+                                                  <Text style={{color: '#2196F3', fontSize: 12, fontWeight: 'bold'}}>📎 View Attached Photo</Text>
+                                              </TouchableOpacity>
+                                          ) : null}
+                                          <Text style={{color: '#666', fontSize: 10, marginTop: 10, fontStyle: 'italic'}}>To edit or delete this entry, locate it in the History tab.</Text>
+                                      </View>
+                                  )}
+                              </TouchableOpacity>
                           );
                       })}
                   </ScrollView>
@@ -746,7 +765,6 @@ const styles = StyleSheet.create({
   toggleContainer: { flexDirection: 'row', backgroundColor: '#121212', borderRadius: 8, borderWidth: 1, borderColor: '#333' },
   toggleBtn: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 6 }, toggleActive: { backgroundColor: '#FF9800' }, toggleText: { color: '#888', fontWeight: 'bold', fontSize: 12 },
   actionBtn: { backgroundColor: '#FF9800', padding: 12, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  logRow: { flexDirection: 'row', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#333', paddingVertical: 10 },
   logDate: { color: '#888', fontSize: 12 }, logType: { color: '#FFF', fontWeight: 'bold' }, logCost: { color: '#4CAF50', fontWeight: 'bold' }, logOdo: { color: '#666', fontSize: 12 },
   label: { color: '#888', fontSize: 12, marginBottom: 5 }, input: { backgroundColor: '#121212', color: '#FFF', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#333' },
   saveBtn: { backgroundColor: '#FF9800', padding: 18, borderRadius: 10, alignItems: 'center', marginTop: 10 }, saveText: { fontWeight: 'bold', color: '#000', fontSize: 16 }

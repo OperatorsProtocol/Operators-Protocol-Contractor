@@ -13,14 +13,16 @@ export default function JobsScreen() {
   const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
   const [jobs, setJobs] = useState<any[]>([]);
+  const [quotes, setQuotes] = useState<any[]>([]); 
   const [vehicles, setVehicles] = useState<any[]>([]);
   const [jobStats, setJobStats] = useState<Record<number, any>>({});
   const [allLogs, setAllLogs] = useState<any[]>([]);
   
   const [filterDate, setFilterDate] = useState(new Date());
   const [timeFrame, setTimeFrame] = useState<'MONTH' | '3_MONTHS' | 'YEAR' | 'ALL'>('MONTH');
-  const [viewMode, setViewMode] = useState<'ACTIVE' | 'COMPLETED'>('ACTIVE');
+  const [viewMode, setViewMode] = useState<'ACTIVE' | 'COMPLETED' | 'QUOTES'>('ACTIVE'); 
 
+  // --- JOB STATES ---
   const [isAddingJob, setIsAddingJob] = useState(false);
   const [newJobName, setNewJobName] = useState('');
   const [newJobAddress, setNewJobAddress] = useState('');
@@ -36,6 +38,7 @@ export default function JobsScreen() {
 
   const [vaultJob, setVaultJob] = useState<any>(null);
 
+  // --- LABOUR STATES ---
   const [selectedJob, setSelectedJob] = useState<any>(null);
   const [isLabourModalVisible, setIsLabourModalVisible] = useState(false);
   const [labourDate, setLabourDate] = useState(new Date());
@@ -46,16 +49,30 @@ export default function JobsScreen() {
   const [labourVehicle, setLabourVehicle] = useState<any>(null);
   const [savingLabour, setSavingLabour] = useState(false);
 
+  // --- QUOTE STATES ---
+  const [isQuoteModalVisible, setIsQuoteModalVisible] = useState(false);
+  const [editQuoteId, setEditQuoteId] = useState<number | null>(null); // NEW: Track which quote we are editing
+  const [qCustomer, setQCustomer] = useState('');
+  const [qDesc, setQDesc] = useState('');
+  const [qLabour, setQLabour] = useState('');
+  const [qMaterials, setQMaterials] = useState('');
+  const [qMarkup, setQMarkup] = useState('15'); 
+  const [qTax, setQTax] = useState('5'); 
+  const [savingQuote, setSavingQuote] = useState(false); 
+
   const fetchData = async () => {
     setRefreshing(true);
 
-    // 1. Session Guard (Prevents ghost data bug)
     const { data: { user }, error: authErr } = await supabase.auth.getUser();
     if (!user || authErr) {
         await supabase.auth.signOut();
         router.replace('/login');
         return;
     }
+
+    // Fetch Quotes
+    const { data: qData } = await supabase.from('quotes').select('*').order('created_at', { ascending: false });
+    if (qData) setQuotes(qData);
 
     const { data: jData } = await supabase.from('jobs').select('*').eq('is_active', viewMode === 'ACTIVE').order('created_at', { ascending: true });
     const { data: lData } = await supabase.from('vehicle_logs').select('*').not('job_id', 'is', null).order('created_at', { ascending: false });
@@ -76,7 +93,6 @@ export default function JobsScreen() {
         
         sortedJobs.forEach((job: any) => {
             const jobLogs = lData ? lData.filter((l: any) => l.job_id === job.id) : [];
-            
             const periodJobLogs = jobLogs.filter((l: any) => {
                 if (timeFrame === 'ALL') return true;
                 const logDate = new Date(l.created_at);
@@ -97,7 +113,6 @@ export default function JobsScreen() {
             periodJobLogs.forEach((log: any) => {
                 const cost = log.cost || 0;
                 const cat = log.expense_category || log.log_type;
-                
                 if (cat === 'FUEL') fuel += cost;
                 else if (cat === 'MATERIALS') materials += cost;
                 else if (cat === 'TOOLS') tools += cost;
@@ -125,13 +140,14 @@ export default function JobsScreen() {
   const handlePrevMonth = () => setFilterDate(new Date(filterDate.getFullYear(), filterDate.getMonth() - 1, 1));
   const handleNextMonth = () => setFilterDate(new Date(filterDate.getFullYear(), filterDate.getMonth() + 1, 1));
 
+  // --- JOB FUNCTIONS ---
   const handleCompleteJob = (id: number, name: string) => {
       if (name === 'General Overhead') return Alert.alert("Protected", "General Overhead cannot be completed.");
       Alert.alert("Complete", `Mark "${name}" as finished?`, [
           { text: "Cancel", style: "cancel" },
           { text: "Mark Complete", onPress: async () => { 
               const { error } = await supabase.from('jobs').update({ is_active: false }).eq('id', id);
-              if (error) Alert.alert("Error", error.message);
+              if (error) Alert.alert("Error", "Could not complete job: " + error.message);
               else fetchData(); 
           }}
       ]);
@@ -142,7 +158,7 @@ export default function JobsScreen() {
           { text: "Cancel", style: "cancel" },
           { text: "Restore", onPress: async () => { 
               const { error } = await supabase.from('jobs').update({ is_active: true }).eq('id', id);
-              if (error) Alert.alert("Error", error.message);
+              if (error) Alert.alert("Error", "Could not restore job: " + error.message);
               else fetchData(); 
           }}
       ]);
@@ -154,26 +170,20 @@ export default function JobsScreen() {
           { text: "Cancel", style: "cancel" },
           { text: "Delete", style: "destructive", onPress: async () => { 
               const { error } = await supabase.from('jobs').delete().eq('id', id);
-              if (error) Alert.alert("Database Error", error.message);
+              if (error) Alert.alert("Database Error", "Could not delete job: " + error.message);
               else fetchData(); 
           }}
       ]);
   };
 
   const handleSaveNewJob = async () => {
-      if (!newJobName) return Alert.alert("Missing", "Please enter a name.");
-      
+      if (!newJobName.trim()) return Alert.alert("Missing", "Please enter a name.");
       const { data: { user } } = await supabase.auth.getUser();
-
       const payload = {
-          name: newJobName,
-          is_business: newJobIsBiz,
-          is_active: true,
-          address: newJobAddress || null,
-          default_distance: newJobDistance ? parseInt(newJobDistance) : null,
+          name: newJobName.trim(), is_business: newJobIsBiz, is_active: true,
+          address: newJobAddress.trim() || null, default_distance: newJobDistance ? parseInt(newJobDistance) : null,
           user_id: user?.id
       };
-
       const { error } = await supabase.from('jobs').insert([payload]);
       if (error) Alert.alert("Error", error.message);
       else { 
@@ -183,51 +193,148 @@ export default function JobsScreen() {
   };
 
   const openEditJobModal = (job: any) => {
-      setEditJobId(job.id);
-      setEditJobName(job.name);
-      setEditJobIsBiz(job.is_business);
-      setEditJobAddress(job.address || '');
-      setEditJobDistance(job.default_distance?.toString() || '');
+      setEditJobId(job.id); setEditJobName(job.name); setEditJobIsBiz(job.is_business);
+      setEditJobAddress(job.address || ''); setEditJobDistance(job.default_distance?.toString() || '');
       setIsEditingJob(true);
   };
 
   const handleUpdateJob = async () => {
-      if (!editJobName || !editJobId) return;
-
+      if (!editJobName.trim() || !editJobId) return;
       const payload = {
-          name: editJobName,
-          is_business: editJobIsBiz,
-          address: editJobAddress || null,
-          default_distance: editJobDistance ? parseInt(editJobDistance) : null
+          name: editJobName.trim(), is_business: editJobIsBiz,
+          address: editJobAddress.trim() || null, default_distance: editJobDistance ? parseInt(editJobDistance) : null
       };
-
       const { error } = await supabase.from('jobs').update(payload).eq('id', editJobId);
-      if (error) Alert.alert("Error", error.message);
+      if (error) Alert.alert("Error", "Could not update job: " + error.message);
       else { setIsEditingJob(false); fetchData(); }
   };
 
+  // --- LABOUR FUNCTIONS ---
   const openLabourModal = (job: any) => { 
       setSelectedJob(job); setHours(''); setRate(''); setLabourNotes(''); setLabourVehicle(null); setLabourDate(new Date()); setIsLabourModalVisible(true); 
   };
   
   const handleSaveLabour = async () => {
-      if (!hours || !rate) return Alert.alert("Missing Info", "Enter hours and rate.");
-      setSavingLabour(true);
+      const parsedHours = Math.max(0, parseFloat(hours || '0'));
+      const parsedRate = Math.max(0, parseFloat(rate || '0'));
+      if (parsedHours <= 0 || parsedRate <= 0) return Alert.alert("Invalid Input", "Please enter valid hours and rate.");
       
+      setSavingLabour(true);
       const { data: { user } } = await supabase.auth.getUser();
-
-      const calculatedCost = parseFloat(hours) * parseFloat(rate);
-      const finalNotes = labourNotes ? `Labour: ${hours} hrs @ $${rate}/hr - ${labourNotes}` : `Labour: ${hours} hrs @ $${rate}/hr`;
+      const calculatedCost = parsedHours * parsedRate;
+      const finalNotes = labourNotes ? `Labour: ${parsedHours} hrs @ $${parsedRate}/hr - ${labourNotes}` : `Labour: ${parsedHours} hrs @ $${parsedRate}/hr`;
 
       const { error } = await supabase.from('vehicle_logs').insert({
-          created_at: labourDate.toISOString(), cost: calculatedCost, hours: parseFloat(hours), hourly_rate: parseFloat(rate),
+          created_at: labourDate.toISOString(), cost: calculatedCost, hours: parsedHours, hourly_rate: parsedRate,
           log_type: 'LABOUR', expense_category: 'LABOUR', is_business: selectedJob.is_business, job_id: selectedJob.id, job_name: selectedJob.name, 
-          vehicle_id: labourVehicle?.id || null, vehicle_name: labourVehicle?.name || null,
-          notes: finalNotes, user_id: user?.id
+          vehicle_id: labourVehicle?.id || null, vehicle_name: labourVehicle?.name || null, notes: finalNotes, user_id: user?.id
       });
       if (error) Alert.alert("Error", error.message);
       else { setIsLabourModalVisible(false); fetchData(); }
       setSavingLabour(false);
+  };
+
+  // --- QUOTE FUNCTIONS ---
+  const calculateQuoteTotal = () => {
+      const l = Math.max(0, parseFloat(qLabour || '0') || 0);
+      const m = Math.max(0, parseFloat(qMaterials || '0') || 0);
+      const mark = Math.max(0, parseFloat(qMarkup || '0') || 0);
+      const tax = Math.max(0, parseFloat(qTax || '0') || 0);
+      
+      const sub = l + m;
+      const preTax = sub * (1 + (mark / 100));
+      const final = preTax * (1 + (tax / 100));
+      return final.toFixed(2);
+  };
+
+  const openNewQuoteModal = () => {
+      setEditQuoteId(null);
+      setQCustomer(''); setQDesc(''); setQLabour(''); setQMaterials(''); setQMarkup('15'); setQTax('5');
+      setIsQuoteModalVisible(true);
+  };
+
+  const openEditQuoteModal = (quote: any) => {
+      setEditQuoteId(quote.id);
+      setQCustomer(quote.customer_name);
+      setQDesc(quote.description || '');
+      setQLabour(quote.est_labour?.toString() || '0');
+      setQMaterials(quote.est_materials?.toString() || '0');
+      setQMarkup(quote.markup_percent?.toString() || '15');
+      setQTax(quote.tax_percent?.toString() || '5');
+      setIsQuoteModalVisible(true);
+  };
+
+  const handleSaveQuote = async () => {
+      if (!qCustomer.trim()) return Alert.alert("Missing", "Customer Name is required.");
+      setSavingQuote(true);
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      const payload = {
+          customer_name: qCustomer.trim(),
+          description: qDesc.trim(),
+          est_labour: Math.max(0, parseFloat(qLabour || '0') || 0),
+          est_materials: Math.max(0, parseFloat(qMaterials || '0') || 0),
+          markup_percent: Math.max(0, parseFloat(qMarkup || '0') || 0),
+          tax_percent: Math.max(0, parseFloat(qTax || '0') || 0),
+          total: parseFloat(calculateQuoteTotal()),
+          status: 'Draft',
+          user_id: user?.id
+      };
+
+      let error;
+      if (editQuoteId) {
+          const { error: updateErr } = await supabase.from('quotes').update(payload).eq('id', editQuoteId);
+          error = updateErr;
+      } else {
+          const { error: insertErr } = await supabase.from('quotes').insert([payload]);
+          error = insertErr;
+      }
+      
+      setSavingQuote(false);
+
+      if (error) {
+          Alert.alert("Error", `Could not ${editQuoteId ? 'update' : 'save'} quote: ` + error.message);
+      } else {
+          setEditQuoteId(null);
+          setQCustomer(''); setQDesc(''); setQLabour(''); setQMaterials(''); setQMarkup('15'); setQTax('5');
+          setIsQuoteModalVisible(false); fetchData();
+      }
+  };
+
+  const handleConvertToJob = async (quote: any) => {
+      Alert.alert("Convert Quote", `Convert ${quote.customer_name}'s quote into an active project?`, [
+          { text: "Cancel", style: "cancel" },
+          { text: "Convert", onPress: async () => {
+              const { data: { user } } = await supabase.auth.getUser();
+              const newJobName = `${quote.customer_name} - ${quote.description || 'Project'}`;
+              
+              const { error: jobErr } = await supabase.from('jobs').insert([{
+                  name: newJobName, is_business: true, is_active: true, user_id: user?.id
+              }]);
+              
+              if (!jobErr) {
+                  const { error: quoteErr } = await supabase.from('quotes').update({ status: 'Accepted & Converted' }).eq('id', quote.id);
+                  if (quoteErr) Alert.alert("Warning", "Job created, but failed to update quote status: " + quoteErr.message);
+                  else {
+                      fetchData();
+                      Alert.alert("Success", "Quote converted to an active project!");
+                  }
+              } else {
+                  Alert.alert("Error", "Failed to create project: " + jobErr.message);
+              }
+          }}
+      ]);
+  };
+
+  const handleDeleteQuote = (id: number) => {
+      Alert.alert("Delete Quote", "Permanently remove this quote?", [
+          { text: "Cancel", style: "cancel" },
+          { text: "Delete", style: "destructive", onPress: async () => {
+              const { error } = await supabase.from('quotes').delete().eq('id', id);
+              if (error) Alert.alert("Error", "Could not delete quote: " + error.message);
+              else fetchData();
+          }}
+      ]);
   };
 
   const triggerExport = (job: any) => {
@@ -284,119 +391,208 @@ export default function JobsScreen() {
   return (
     <View style={styles.container}>
       <View style={[styles.headerContainer, {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}]}>
-          <Text style={styles.header}>PROJECTS / TRIPS</Text>
-          <TouchableOpacity onPress={() => {
-              setNewJobName(''); setNewJobAddress(''); setNewJobDistance(''); setIsAddingJob(true);
-          }}><Text style={{color: '#FF9800', fontWeight: 'bold', fontSize: 16}}>+ NEW</Text></TouchableOpacity>
+          <Text style={styles.header}>{viewMode === 'QUOTES' ? 'QUOTES & ESTIMATES' : 'PROJECTS / TRIPS'}</Text>
+          {viewMode === 'QUOTES' ? (
+              <TouchableOpacity onPress={openNewQuoteModal}><Text style={{color: '#2196F3', fontWeight: 'bold', fontSize: 16}}>+ NEW QUOTE</Text></TouchableOpacity>
+          ) : (
+              <TouchableOpacity onPress={() => { setNewJobName(''); setNewJobAddress(''); setNewJobDistance(''); setIsAddingJob(true); }}><Text style={{color: '#FF9800', fontWeight: 'bold', fontSize: 16}}>+ NEW</Text></TouchableOpacity>
+          )}
       </View>
 
       <View style={styles.toggleContainer}>
           <TouchableOpacity style={[styles.toggleBtn, viewMode === 'ACTIVE' && styles.toggleActive]} onPress={() => setViewMode('ACTIVE')}><Text style={[styles.toggleText, viewMode === 'ACTIVE' && {color: '#000'}]}>ACTIVE</Text></TouchableOpacity>
           <TouchableOpacity style={[styles.toggleBtn, viewMode === 'COMPLETED' && styles.toggleActive]} onPress={() => setViewMode('COMPLETED')}><Text style={[styles.toggleText, viewMode === 'COMPLETED' && {color: '#000'}]}>COMPLETED</Text></TouchableOpacity>
+          <TouchableOpacity style={[styles.toggleBtn, viewMode === 'QUOTES' && {backgroundColor: '#2196F3'}]} onPress={() => setViewMode('QUOTES')}><Text style={[styles.toggleText, viewMode === 'QUOTES' && {color: '#FFF'}]}>QUOTES</Text></TouchableOpacity>
       </View>
 
-      <View style={{ marginBottom: 15 }}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 5, paddingRight: 20 }}>
-              <TouchableOpacity style={[styles.pill, timeFrame === 'MONTH' && styles.pillActive]} onPress={() => setTimeFrame('MONTH')}>
-                  <Text style={[styles.pillText, timeFrame === 'MONTH' && styles.pillTextActive]}>THIS MONTH</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.pill, timeFrame === '3_MONTHS' && styles.pillActive]} onPress={() => setTimeFrame('3_MONTHS')}>
-                  <Text style={[styles.pillText, timeFrame === '3_MONTHS' && styles.pillTextActive]}>LAST 90 DAYS</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.pill, timeFrame === 'YEAR' && styles.pillActive]} onPress={() => setTimeFrame('YEAR')}>
-                  <Text style={[styles.pillText, timeFrame === 'YEAR' && styles.pillTextActive]}>THIS YEAR</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.pill, timeFrame === 'ALL' && styles.pillActive]} onPress={() => setTimeFrame('ALL')}>
-                  <Text style={[styles.pillText, timeFrame === 'ALL' && styles.pillTextActive]}>ALL-TIME</Text>
-              </TouchableOpacity>
-          </ScrollView>
-      </View>
-
-      <View style={styles.filterRow}>
-          {timeFrame === 'MONTH' ? (
-              <>
-                  <TouchableOpacity onPress={handlePrevMonth} style={styles.arrowBtn}><Ionicons name="chevron-back" size={24} color="#FF9800" /></TouchableOpacity>
-                  <Text style={styles.monthText}>{MONTHS[filterDate.getMonth()]} {filterDate.getFullYear()}</Text>
-                  <TouchableOpacity onPress={handleNextMonth} style={styles.arrowBtn}><Ionicons name="chevron-forward" size={24} color="#FF9800" /></TouchableOpacity>
-              </>
-          ) : (
-              <View style={{flex: 1, alignItems: 'center'}}>
-                  <Text style={styles.monthText}>
-                      {timeFrame === '3_MONTHS' ? 'LAST 90 DAYS' : timeFrame === 'YEAR' ? `YEAR TO DATE (${new Date().getFullYear()})` : 'ALL-TIME HISTORY'}
-                  </Text>
+      {/* Hide filters if viewing quotes */}
+      {viewMode !== 'QUOTES' && (
+          <>
+              <View style={{ marginBottom: 15 }}>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 5, paddingRight: 20 }}>
+                      <TouchableOpacity style={[styles.pill, timeFrame === 'MONTH' && styles.pillActive]} onPress={() => setTimeFrame('MONTH')}><Text style={[styles.pillText, timeFrame === 'MONTH' && styles.pillTextActive]}>THIS MONTH</Text></TouchableOpacity>
+                      <TouchableOpacity style={[styles.pill, timeFrame === '3_MONTHS' && styles.pillActive]} onPress={() => setTimeFrame('3_MONTHS')}><Text style={[styles.pillText, timeFrame === '3_MONTHS' && styles.pillTextActive]}>LAST 90 DAYS</Text></TouchableOpacity>
+                      <TouchableOpacity style={[styles.pill, timeFrame === 'YEAR' && styles.pillActive]} onPress={() => setTimeFrame('YEAR')}><Text style={[styles.pillText, timeFrame === 'YEAR' && styles.pillTextActive]}>THIS YEAR</Text></TouchableOpacity>
+                      <TouchableOpacity style={[styles.pill, timeFrame === 'ALL' && styles.pillActive]} onPress={() => setTimeFrame('ALL')}><Text style={[styles.pillText, timeFrame === 'ALL' && styles.pillTextActive]}>ALL-TIME</Text></TouchableOpacity>
+                  </ScrollView>
               </View>
-          )}
-      </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 100 }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={fetchData} tintColor="#FF9800" />}>
-          {jobs.length === 0 && !refreshing && <Text style={styles.emptyText}>No {viewMode.toLowerCase()} records found.</Text>}
-          {jobs.map((job: any) => {
-              const stats = jobStats[job.id] || { fuel: 0, materials: 0, tools: 0, labour: 0, maintenance: 0, rentals: 0, permits: 0, insurance: 0, admin: 0, periodTotal: 0, lifetimeTotal: 0 };
-              const borderColor = job.is_business ? '#4CAF50' : '#9C27B0';
-              let spendLabel = timeFrame === 'MONTH' ? `${MONTHS[filterDate.getMonth()].toUpperCase()} SPEND` : timeFrame === '3_MONTHS' ? '90 DAY SPEND' : timeFrame === 'YEAR' ? 'YTD SPEND' : 'ALL-TIME SPEND';
-
-              return (
-                  <View key={job.id} style={[styles.jobCard, {borderLeftWidth: 4, borderLeftColor: borderColor}]}>
-                      <View style={styles.jobHeader}>
-                          <View style={{flexDirection: 'row', alignItems: 'center', flex: 1}}>
-                            <View style={{flex: 1}}>
-                                <Text style={[styles.jobTitle, viewMode === 'COMPLETED' && {color: '#888'}]} numberOfLines={1}>{job.is_business ? '💼' : '🏠'} {job.name}</Text>
-                                <Text style={{color: '#666', fontSize: 10, marginTop: 4, fontWeight: 'bold'}}>LIFETIME: ${stats.lifetimeTotal.toFixed(2)}</Text>
-                            </View>
-                            {job.name !== 'General Overhead' && (
-                                <TouchableOpacity onPress={() => openEditJobModal(job)} style={{marginLeft: 15, padding: 5}}>
-                                    <Ionicons name="pencil-outline" size={20} color="#888" />
-                                </TouchableOpacity>
-                            )}
-                          </View>
-
-                          <View style={{alignItems: 'flex-end', marginLeft: 10}}>
-                            <Text style={{color: '#888', fontSize: 10, fontWeight: 'bold', marginBottom: 2}}>{spendLabel}</Text>
-                            <Text style={[styles.jobTotal, viewMode === 'COMPLETED' && {color: '#AAA'}]}>${stats.periodTotal.toFixed(2)}</Text>
-                          </View>
+              <View style={styles.filterRow}>
+                  {timeFrame === 'MONTH' ? (
+                      <>
+                          <TouchableOpacity onPress={handlePrevMonth} style={styles.arrowBtn}><Ionicons name="chevron-back" size={24} color="#FF9800" /></TouchableOpacity>
+                          <Text style={styles.monthText}>{MONTHS[filterDate.getMonth()]} {filterDate.getFullYear()}</Text>
+                          <TouchableOpacity onPress={handleNextMonth} style={styles.arrowBtn}><Ionicons name="chevron-forward" size={24} color="#FF9800" /></TouchableOpacity>
+                      </>
+                  ) : (
+                      <View style={{flex: 1, alignItems: 'center'}}>
+                          <Text style={styles.monthText}>{timeFrame === '3_MONTHS' ? 'LAST 90 DAYS' : timeFrame === 'YEAR' ? `YEAR TO DATE (${new Date().getFullYear()})` : 'ALL-TIME HISTORY'}</Text>
                       </View>
+                  )}
+              </View>
+          </>
+      )}
 
-                      {job.address && <Text style={{color: '#888', fontSize: 12, marginBottom: 10}}>📍 {job.address} {job.default_distance ? `(${job.default_distance} dist)` : ''}</Text>}
+      <ScrollView contentContainerStyle={{ paddingBottom: 100 }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={fetchData} tintColor={viewMode === 'QUOTES' ? '#2196F3' : '#FF9800'} />}>
+          
+          {/* QUOTES VIEW */}
+          {viewMode === 'QUOTES' && (
+              <>
+                  {quotes.length === 0 && !refreshing && <Text style={styles.emptyText}>No quotes found. Tap + NEW QUOTE to build an estimate.</Text>}
+                  {quotes.map(quote => (
+                      <View key={quote.id} style={[styles.jobCard, {borderLeftWidth: 4, borderLeftColor: '#2196F3'}]}>
+                          <View style={styles.jobHeader}>
+                              <View style={{flex: 1}}>
+                                  <Text style={styles.jobTitle} numberOfLines={1}>📄 {quote.customer_name}</Text>
+                                  <Text style={{color: '#888', fontSize: 12, marginTop: 4}}>{quote.description}</Text>
+                              </View>
+                              <View style={{alignItems: 'flex-end', marginLeft: 10}}>
+                                  <Text style={{color: '#888', fontSize: 10, fontWeight: 'bold', marginBottom: 2}}>EST TOTAL</Text>
+                                  <Text style={[styles.jobTotal, {color: '#2196F3'}]}>${quote.total.toFixed(2)}</Text>
+                              </View>
+                          </View>
 
-                      <TouchableOpacity style={styles.vaultBtn} onPress={() => setVaultJob(job)}>
-                          <Text style={styles.vaultBtnText}>🗄️ OPEN PROJECT VAULT</Text>
-                      </TouchableOpacity>
-                      
-                      <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>⛽ Fuel & Oil</Text><Text style={styles.breakdownValue}>${stats.fuel.toFixed(2)}</Text></View>
-                      <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>🧱 Materials</Text><Text style={styles.breakdownValue}>${stats.materials.toFixed(2)}</Text></View>
-                      <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>🧰 Tools</Text><Text style={styles.breakdownValue}>${stats.tools.toFixed(2)}</Text></View>
-                      <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>⏱️ Labour</Text><Text style={styles.breakdownValue}>${stats.labour.toFixed(2)}</Text></View>
-                      <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>🔧 Maintenance & Repairs</Text><Text style={styles.breakdownValue}>${stats.maintenance.toFixed(2)}</Text></View>
-                      <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>🏗️ Rentals</Text><Text style={styles.breakdownValue}>${stats.rentals.toFixed(2)}</Text></View>
-                      <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>📜 Permits</Text><Text style={styles.breakdownValue}>${stats.permits.toFixed(2)}</Text></View>
-                      <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>🛡️ Insurance</Text><Text style={styles.breakdownValue}>${stats.insurance.toFixed(2)}</Text></View>
-                      <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>💻 Admin & Parking</Text><Text style={styles.breakdownValue}>${stats.admin.toFixed(2)}</Text></View>
+                          <View style={{flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15, paddingBottom: 15, borderBottomWidth: 1, borderBottomColor: '#333'}}>
+                              <Text style={{color: '#AAA', fontSize: 12}}>Status: <Text style={{fontWeight: 'bold', color: quote.status.includes('Accepted') ? '#4CAF50' : '#FF9800'}}>{quote.status}</Text></Text>
+                              <Text style={{color: '#AAA', fontSize: 12}}>{new Date(quote.created_at).toLocaleDateString()}</Text>
+                          </View>
 
-                      <View style={styles.actionRow}>
-                          {viewMode === 'ACTIVE' ? (
-                              <>
-                                  <TouchableOpacity style={styles.actionBtnBlue} onPress={() => router.navigate({ pathname: '/(tabs)', params: { prefillJob: job.id, isBiz: job.is_business.toString(), editId: '' } })}><Text style={styles.actionBtnText}>+ EXPENSE</Text></TouchableOpacity>
-                                  <TouchableOpacity style={styles.actionBtnDark} onPress={() => openLabourModal(job)}><Text style={styles.actionBtnText}>+ LABOUR</Text></TouchableOpacity>
-                              </>
-                          ) : (
-                              <TouchableOpacity style={[styles.completeBtn, {backgroundColor: '#333', flex: 2}]} onPress={() => handleRestoreJob(job.id, job.name)}>
-                                  <Text style={[styles.completeBtnText, {color: '#FFF'}]}>↺ RESTORE</Text>
+                          <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>Estimated Labour</Text><Text style={styles.breakdownValue}>${quote.est_labour.toFixed(2)}</Text></View>
+                          <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>Estimated Materials</Text><Text style={styles.breakdownValue}>${quote.est_materials.toFixed(2)}</Text></View>
+                          <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>Markup Applied</Text><Text style={styles.breakdownValue}>{quote.markup_percent}%</Text></View>
+                          <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>Tax</Text><Text style={styles.breakdownValue}>{quote.tax_percent}%</Text></View>
+
+                          <View style={{flexDirection: 'row', marginTop: 15, gap: 10}}>
+                              {quote.status !== 'Accepted & Converted' && (
+                                  <TouchableOpacity style={[styles.completeBtn, {backgroundColor: '#4CAF50', flex: 1}]} onPress={() => handleConvertToJob(quote)}>
+                                      <Text style={styles.completeBtnText}>✓ CONVERT</Text>
+                                  </TouchableOpacity>
+                              )}
+                              <TouchableOpacity style={{ width: 50, backgroundColor: '#333', paddingVertical: 10, borderRadius: 8, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#555' }} onPress={() => openEditQuoteModal(quote)}>
+                                  <Ionicons name="pencil" size={18} color="#FFF" />
                               </TouchableOpacity>
-                          )}
-                          <TouchableOpacity style={styles.exportBtn} onPress={() => triggerExport(job)}><Ionicons name="download-outline" size={18} color="#000" /></TouchableOpacity>
-                      </View>
-                      
-                      {job.name !== 'General Overhead' && (
-                          <View style={{flexDirection: 'row', marginTop: 10, gap: 10}}>
-                             {viewMode === 'ACTIVE' && <TouchableOpacity style={styles.completeBtn} onPress={() => handleCompleteJob(job.id, job.name)}><Text style={styles.completeBtnText}>✓ FINISH</Text></TouchableOpacity>}
-                             <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDeleteJob(job.id, job.name)}><Ionicons name="trash" size={18} color="#FFF" /></TouchableOpacity>
+                              <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDeleteQuote(quote.id)}>
+                                  <Ionicons name="trash" size={18} color="#FFF" />
+                              </TouchableOpacity>
                           </View>
-                      )}
-                  </View>
-              );
-          })}
+                      </View>
+                  ))}
+              </>
+          )}
+
+          {/* JOBS VIEW */}
+          {viewMode !== 'QUOTES' && (
+              <>
+                  {jobs.length === 0 && !refreshing && <Text style={styles.emptyText}>No {viewMode.toLowerCase()} records found.</Text>}
+                  {jobs.map((job: any) => {
+                      const stats = jobStats[job.id] || { fuel: 0, materials: 0, tools: 0, labour: 0, maintenance: 0, rentals: 0, permits: 0, insurance: 0, admin: 0, periodTotal: 0, lifetimeTotal: 0 };
+                      const borderColor = job.is_business ? '#4CAF50' : '#9C27B0';
+                      let spendLabel = timeFrame === 'MONTH' ? `${MONTHS[filterDate.getMonth()].toUpperCase()} SPEND` : timeFrame === '3_MONTHS' ? '90 DAY SPEND' : timeFrame === 'YEAR' ? 'YTD SPEND' : 'ALL-TIME SPEND';
+
+                      return (
+                          <View key={job.id} style={[styles.jobCard, {borderLeftWidth: 4, borderLeftColor: borderColor}]}>
+                              <View style={styles.jobHeader}>
+                                  <View style={{flexDirection: 'row', alignItems: 'center', flex: 1}}>
+                                    <View style={{flex: 1}}>
+                                        <Text style={[styles.jobTitle, viewMode === 'COMPLETED' && {color: '#888'}]} numberOfLines={1}>{job.is_business ? '💼' : '🏠'} {job.name}</Text>
+                                        <Text style={{color: '#666', fontSize: 10, marginTop: 4, fontWeight: 'bold'}}>LIFETIME: ${stats.lifetimeTotal.toFixed(2)}</Text>
+                                    </View>
+                                    {job.name !== 'General Overhead' && (
+                                        <TouchableOpacity onPress={() => openEditJobModal(job)} style={{marginLeft: 15, padding: 5}}>
+                                            <Ionicons name="pencil-outline" size={20} color="#888" />
+                                        </TouchableOpacity>
+                                    )}
+                                  </View>
+
+                                  <View style={{alignItems: 'flex-end', marginLeft: 10}}>
+                                    <Text style={{color: '#888', fontSize: 10, fontWeight: 'bold', marginBottom: 2}}>{spendLabel}</Text>
+                                    <Text style={[styles.jobTotal, viewMode === 'COMPLETED' && {color: '#AAA'}]}>${stats.periodTotal.toFixed(2)}</Text>
+                                  </View>
+                              </View>
+
+                              {job.address && <Text style={{color: '#888', fontSize: 12, marginBottom: 10}}>📍 {job.address} {job.default_distance ? `(${job.default_distance} dist)` : ''}</Text>}
+
+                              <TouchableOpacity style={styles.vaultBtn} onPress={() => setVaultJob(job)}>
+                                  <Text style={styles.vaultBtnText}>🗄️ OPEN PROJECT VAULT</Text>
+                              </TouchableOpacity>
+                              
+                              <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>⛽ Fuel & Oil</Text><Text style={styles.breakdownValue}>${stats.fuel.toFixed(2)}</Text></View>
+                              <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>🧱 Materials</Text><Text style={styles.breakdownValue}>${stats.materials.toFixed(2)}</Text></View>
+                              <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>🧰 Tools</Text><Text style={styles.breakdownValue}>${stats.tools.toFixed(2)}</Text></View>
+                              <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>⏱️ Labour</Text><Text style={styles.breakdownValue}>${stats.labour.toFixed(2)}</Text></View>
+                              <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>🔧 Maintenance & Repairs</Text><Text style={styles.breakdownValue}>${stats.maintenance.toFixed(2)}</Text></View>
+                              <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>🏗️ Rentals</Text><Text style={styles.breakdownValue}>${stats.rentals.toFixed(2)}</Text></View>
+                              <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>📜 Permits</Text><Text style={styles.breakdownValue}>${stats.permits.toFixed(2)}</Text></View>
+                              <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>🛡️ Insurance</Text><Text style={styles.breakdownValue}>${stats.insurance.toFixed(2)}</Text></View>
+                              <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>💻 Admin & Parking</Text><Text style={styles.breakdownValue}>${stats.admin.toFixed(2)}</Text></View>
+
+                              <View style={styles.actionRow}>
+                                  {viewMode === 'ACTIVE' ? (
+                                      <>
+                                          <TouchableOpacity style={styles.actionBtnBlue} onPress={() => router.navigate({ pathname: '/(tabs)', params: { prefillJob: job.id, isBiz: job.is_business.toString(), editId: '' } })}><Text style={styles.actionBtnText}>+ EXPENSE</Text></TouchableOpacity>
+                                          <TouchableOpacity style={styles.actionBtnDark} onPress={() => openLabourModal(job)}><Text style={styles.actionBtnText}>+ LABOUR</Text></TouchableOpacity>
+                                      </>
+                                  ) : (
+                                      <TouchableOpacity style={[styles.completeBtn, {backgroundColor: '#333', flex: 2}]} onPress={() => handleRestoreJob(job.id, job.name)}>
+                                          <Text style={[styles.completeBtnText, {color: '#FFF'}]}>↺ RESTORE</Text>
+                                      </TouchableOpacity>
+                                  )}
+                                  <TouchableOpacity style={styles.exportBtn} onPress={() => triggerExport(job)}><Ionicons name="download-outline" size={18} color="#000" /></TouchableOpacity>
+                              </View>
+                              
+                              {job.name !== 'General Overhead' && (
+                                  <View style={{flexDirection: 'row', marginTop: 10, gap: 10}}>
+                                     {viewMode === 'ACTIVE' && <TouchableOpacity style={styles.completeBtn} onPress={() => handleCompleteJob(job.id, job.name)}><Text style={styles.completeBtnText}>✓ FINISH</Text></TouchableOpacity>}
+                                     <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDeleteJob(job.id, job.name)}><Ionicons name="trash" size={18} color="#FFF" /></TouchableOpacity>
+                                  </View>
+                              )}
+                          </View>
+                      );
+                  })}
+              </>
+          )}
       </ScrollView>
 
+      {/* --- QUOTE MODAL --- */}
+      <Modal visible={isQuoteModalVisible} animationType="fade" transparent>
+          <View style={styles.modalBg}>
+              <View style={[styles.modalContent, {height: '90%', paddingBottom: 40}]}>
+                  <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20}}>
+                      <Text style={styles.modalTitle}>{editQuoteId ? 'Edit Quote' : 'Build Quote'}</Text>
+                      <TouchableOpacity onPress={() => setIsQuoteModalVisible(false)}><Ionicons name="close" size={28} color="#FFF" /></TouchableOpacity>
+                  </View>
+                  
+                  <ScrollView showsVerticalScrollIndicator={false}>
+                      <Text style={styles.label}>Customer / Client Name</Text>
+                      <TextInput style={[styles.input, {marginBottom: 15}]} value={qCustomer} onChangeText={setQCustomer} placeholder="e.g. John Smith" placeholderTextColor="#666" />
+                      
+                      <Text style={styles.label}>Job Description</Text>
+                      <TextInput style={[styles.input, {marginBottom: 15}]} value={qDesc} onChangeText={setQDesc} placeholder="e.g. Master Bathroom Reno" placeholderTextColor="#666" />
+
+                      <View style={{flexDirection: 'row', gap: 15, marginBottom: 15}}>
+                          <View style={{flex: 1}}><Text style={styles.label}>Est. Labour ($)</Text><TextInput style={styles.input} value={qLabour} onChangeText={setQLabour} keyboardType="decimal-pad" placeholder="0" placeholderTextColor="#666" /></View>
+                          <View style={{flex: 1}}><Text style={styles.label}>Est. Materials ($)</Text><TextInput style={styles.input} value={qMaterials} onChangeText={setQMaterials} keyboardType="decimal-pad" placeholder="0" placeholderTextColor="#666" /></View>
+                      </View>
+
+                      <View style={{flexDirection: 'row', gap: 15, marginBottom: 15}}>
+                          <View style={{flex: 1}}><Text style={styles.label}>Markup (%)</Text><TextInput style={styles.input} value={qMarkup} onChangeText={setQMarkup} keyboardType="decimal-pad" placeholder="15" placeholderTextColor="#666" /></View>
+                          <View style={{flex: 1}}><Text style={styles.label}>Tax (%)</Text><TextInput style={styles.input} value={qTax} onChangeText={setQTax} keyboardType="decimal-pad" placeholder="5" placeholderTextColor="#666" /></View>
+                      </View>
+
+                      <View style={styles.costPreview}>
+                          <Text style={{color: '#888', fontWeight: 'bold'}}>ESTIMATED TOTAL TO CLIENT</Text>
+                          <Text style={{color: '#2196F3', fontSize: 32, fontWeight: 'bold'}}>${calculateQuoteTotal()}</Text>
+                      </View>
+
+                      <TouchableOpacity onPress={handleSaveQuote} style={[styles.saveBtn, {backgroundColor: '#2196F3'}]} disabled={savingQuote}>
+                          {savingQuote ? <ActivityIndicator color="#FFF" /> : <Text style={[styles.saveText, {color: '#FFF'}]}>{editQuoteId ? 'UPDATE QUOTE' : 'SAVE QUOTE'}</Text>}
+                      </TouchableOpacity>
+                  </ScrollView>
+              </View>
+          </View>
+      </Modal>
+
+      {/* --- VAULT MODAL --- */}
       <Modal visible={!!vaultJob} animationType="slide" transparent>
           <View style={styles.modalBg}>
               <View style={styles.modalContent}>
@@ -449,6 +645,7 @@ export default function JobsScreen() {
           </View>
       </Modal>
 
+      {/* --- LABOUR MODAL --- */}
       <Modal visible={isLabourModalVisible} animationType="slide" transparent>
           <View style={styles.modalBg}>
               <View style={styles.modalContent}>
@@ -496,6 +693,7 @@ export default function JobsScreen() {
           </View>
       </Modal>
 
+      {/* --- ADD/EDIT JOB MODALS --- */}
       <Modal visible={isAddingJob} animationType="fade" transparent>
           <View style={styles.modalBg}>
               <View style={[styles.modalContent, {height: 'auto', paddingBottom: 40}]}>

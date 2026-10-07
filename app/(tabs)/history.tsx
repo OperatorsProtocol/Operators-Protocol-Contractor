@@ -247,24 +247,25 @@ export default function HistoryScreen() {
                     {item.odometer > 0 && <Text style={styles.metricItem}>Odo: {item.odometer}</Text>}
                 </View>
 
-                <View style={{flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, alignItems: 'center'}}>
-                    <View style={{flexDirection: 'row', flex: 1}}>
+                {/* MODIFIED: Wrapped buttons row for better small-screen fit */}
+                <View style={{flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, alignItems: 'center', flexWrap: 'wrap', gap: 10}}>
+                    <View style={{flexDirection: 'row', flexWrap: 'wrap', flex: 1, gap: 10}}>
                         {item.receipt_url ? (
-                            <TouchableOpacity style={[styles.receiptBtn, {backgroundColor: borderColor, marginRight: 10}]} onPress={() => setViewPhoto(item.receipt_url)}>
+                            <TouchableOpacity style={[styles.receiptBtn, {backgroundColor: borderColor}]} onPress={() => setViewPhoto(item.receipt_url)}>
                                 <Text style={styles.btnText}>📄 RECEIPT</Text>
                             </TouchableOpacity>
                         ) : (
-                            <TouchableOpacity style={[styles.receiptBtn, styles.dashedBtn, {marginRight: 10}]} onPress={() => handleAttachPhoto(item.id, 'receipt')} disabled={uploadingId === `${item.id}-receipt`}>
+                            <TouchableOpacity style={[styles.receiptBtn, styles.dashedBtn]} onPress={() => handleAttachPhoto(item.id, 'receipt')} disabled={uploadingId === `${item.id}-receipt`}>
                                 {uploadingId === `${item.id}-receipt` ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={styles.btnText}>📎 ATTACH</Text>}
                             </TouchableOpacity>
                         )}
                         
                         {item.odometer_image ? (
-                            <TouchableOpacity style={[styles.receiptBtn, {backgroundColor: '#555', marginRight: 10}]} onPress={() => setViewPhoto(item.odometer_image)}>
+                            <TouchableOpacity style={[styles.receiptBtn, {backgroundColor: '#555'}]} onPress={() => setViewPhoto(item.odometer_image)}>
                                 <Text style={styles.btnText}>📸 ODO PIC</Text>
                             </TouchableOpacity>
                         ) : (item.odometer && (item.expense_category === 'FUEL' || item.expense_category === 'MAINTENANCE')) ? (
-                            <TouchableOpacity style={[styles.receiptBtn, styles.dashedBtn, {marginRight: 10}]} onPress={() => handleAttachPhoto(item.id, 'odometer')} disabled={uploadingId === `${item.id}-odometer`}>
+                            <TouchableOpacity style={[styles.receiptBtn, styles.dashedBtn]} onPress={() => handleAttachPhoto(item.id, 'odometer')} disabled={uploadingId === `${item.id}-odometer`}>
                                 {uploadingId === `${item.id}-odometer` ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={styles.btnText}>📎 ODO PIC</Text>}
                             </TouchableOpacity>
                         ) : null}
@@ -361,8 +362,11 @@ const styles = StyleSheet.create({
   cost: { color: '#FFF', fontSize: 24, fontWeight: 'bold' }, vendor: { color: '#AAA', fontSize: 12, marginBottom: 4, fontWeight: 'bold' },
   notes: { color: '#CCC', fontStyle: 'italic', marginBottom: 10, fontSize: 14 },
   expandedSection: { marginTop: 15, borderTopWidth: 1, borderTopColor: '#333', paddingTop: 15 },
-  metricsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 10 },
-  metricItem: { backgroundColor: '#121212', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 4, color: '#888', fontSize: 11, fontWeight: 'bold', borderWidth: 1, borderColor: '#333' },
+  
+  // MODIFIED: Bulletproof wrapping spacing
+  metricsGrid: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 5 },
+  metricItem: { backgroundColor: '#121212', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6, color: '#AAA', fontSize: 11, fontWeight: 'bold', borderWidth: 1, borderColor: '#333', marginRight: 8, marginBottom: 8, overflow: 'hidden' }, 
+  
   detailText: { color: '#888', fontSize: 12, fontWeight: 'bold', marginTop: 4 },
   receiptBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 6, alignItems: 'center', justifyContent: 'center' },
   dashedBtn: { backgroundColor: '#333', borderWidth: 1, borderColor: '#555', borderStyle: 'dashed' },
