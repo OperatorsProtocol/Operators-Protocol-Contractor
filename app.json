@@ -2,7 +2,7 @@
   "expo": {
     "name": "Operators Protocol: Contractor",
     "slug": "operators-protocol-contractor",
-    "version": "1.0.16",
+    "version": "1.0.17",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "operators-protocol",
@@ -15,7 +15,7 @@
         "ITSAppUsesNonExemptEncryption": false,
         "NSCameraUsageDescription": "This app requires camera access to scan and capture job site receipts for expense tracking and to log vehicle odometer readings."
       },
-      "buildNumber": "17"
+      "buildNumber": "18"
     },
     "android": {
       "adaptiveIcon": {
@@ -25,7 +25,7 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.operatorsprotocol.contractor",
-      "versionCode": 18
+      "versionCode": 19
     },
     "web": {
       "output": "static",

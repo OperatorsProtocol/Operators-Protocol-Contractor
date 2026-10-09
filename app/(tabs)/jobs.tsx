@@ -4,7 +4,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { useFocusEffect, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, Platform, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, Platform, RefreshControl, ScrollView, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { supabase } from '../../supabase';
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -51,7 +51,7 @@ export default function JobsScreen() {
 
   // --- QUOTE STATES ---
   const [isQuoteModalVisible, setIsQuoteModalVisible] = useState(false);
-  const [editQuoteId, setEditQuoteId] = useState<number | null>(null); // NEW: Track which quote we are editing
+  const [editQuoteId, setEditQuoteId] = useState<number | null>(null);
   const [qCustomer, setQCustomer] = useState('');
   const [qDesc, setQDesc] = useState('');
   const [qLabour, setQLabour] = useState('');
@@ -70,7 +70,6 @@ export default function JobsScreen() {
         return;
     }
 
-    // Fetch Quotes
     const { data: qData } = await supabase.from('quotes').select('*').order('created_at', { ascending: false });
     if (qData) setQuotes(qData);
 
@@ -234,17 +233,83 @@ export default function JobsScreen() {
       setSavingLabour(false);
   };
 
-  // --- QUOTE FUNCTIONS ---
-  const calculateQuoteTotal = () => {
-      const l = Math.max(0, parseFloat(qLabour || '0') || 0);
-      const m = Math.max(0, parseFloat(qMaterials || '0') || 0);
-      const mark = Math.max(0, parseFloat(qMarkup || '0') || 0);
-      const tax = Math.max(0, parseFloat(qTax || '0') || 0);
+  // --- QUOTE MATH HELPER ---
+  const calculateQuoteMath = (quote: any) => {
+      const l = Math.max(0, parseFloat(quote.est_labour || '0') || 0);
+      const m = Math.max(0, parseFloat(quote.est_materials || '0') || 0);
+      const markPct = Math.max(0, parseFloat(quote.markup_percent || '0') || 0);
+      const taxPct = Math.max(0, parseFloat(quote.tax_percent || '0') || 0);
       
-      const sub = l + m;
-      const preTax = sub * (1 + (mark / 100));
-      const final = preTax * (1 + (tax / 100));
-      return final.toFixed(2);
+      const subBase = l + m;
+      const markupAmt = subBase * (markPct / 100);
+      const subTotal = subBase + markupAmt;
+      const taxAmt = subTotal * (taxPct / 100);
+      const total = subTotal + taxAmt;
+      
+      return { l, m, markPct, markupAmt, subTotal, taxPct, taxAmt, total };
+  };
+
+  // --- NATIVE SHARING FUNCTIONS ---
+  const handleShareQuote = async (quote: any) => {
+      const math = calculateQuoteMath(quote);
+      const message = `========================================
+           ESTIMATE / QUOTE
+========================================
+From: Operators Protocol
+Client: ${quote.customer_name}
+Date: ${new Date(quote.created_at).toLocaleDateString()}
+${quote.description ? `Project: ${quote.description}\n` : ''}
+--- LINE ITEMS ---
+• Estimated Labour: $${math.l.toFixed(2)}
+• Estimated Materials: $${math.m.toFixed(2)}
+• Markup (${math.markPct}%): $${math.markupAmt.toFixed(2)}
+----------------------------------------
+SUBTOTAL: $${math.subTotal.toFixed(2)}
+TAX (${math.taxPct}%): $${math.taxAmt.toFixed(2)}
+========================================
+ESTIMATED TOTAL: $${math.total.toFixed(2)}
+========================================`;
+
+      try {
+          await Share.share({ message, title: `Quote for ${quote.customer_name}` });
+      } catch (error: any) {
+          Alert.alert("Error", error.message);
+      }
+  };
+
+  const handleGenerateInvoice = async (quote: any) => {
+      const math = calculateQuoteMath(quote);
+      const message = `========================================
+           INVOICE / BILLING
+========================================
+From: Operators Protocol
+Client: ${quote.customer_name}
+Date: ${new Date().toLocaleDateString()}
+${quote.description ? `Project: ${quote.description}\n` : ''}
+--- LINE ITEMS ---
+• Labour: $${math.l.toFixed(2)}
+• Materials: $${math.m.toFixed(2)}
+• Markup (${math.markPct}%): $${math.markupAmt.toFixed(2)}
+----------------------------------------
+SUBTOTAL: $${math.subTotal.toFixed(2)}
+TAX (${math.taxPct}%): $${math.taxAmt.toFixed(2)}
+========================================
+TOTAL DUE: $${math.total.toFixed(2)}
+
+Payment Terms: Due upon receipt.
+========================================`;
+
+      try {
+          await Share.share({ message, title: `Invoice for ${quote.customer_name}` });
+      } catch (error: any) {
+          Alert.alert("Error", error.message);
+      }
+  };
+
+  // --- QUOTE MODAL LOGIC ---
+  const calculateQuoteTotal = () => {
+      const qDummy = { est_labour: qLabour, est_materials: qMaterials, markup_percent: qMarkup, tax_percent: qTax };
+      return calculateQuoteMath(qDummy).total.toFixed(2);
   };
 
   const openNewQuoteModal = () => {
@@ -306,7 +371,7 @@ export default function JobsScreen() {
           { text: "Cancel", style: "cancel" },
           { text: "Convert", onPress: async () => {
               const { data: { user } } = await supabase.auth.getUser();
-              const newJobName = `${quote.customer_name} - ${quote.description || 'Project'}`;
+              const newJobName = `${quote.customer_name} ${quote.description || 'Project'}`;
               
               const { error: jobErr } = await supabase.from('jobs').insert([{
                   name: newJobName, is_business: true, is_active: true, user_id: user?.id
@@ -462,19 +527,33 @@ export default function JobsScreen() {
                           <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>Markup Applied</Text><Text style={styles.breakdownValue}>{quote.markup_percent}%</Text></View>
                           <View style={styles.breakdownRow}><Text style={styles.breakdownLabel}>Tax</Text><Text style={styles.breakdownValue}>{quote.tax_percent}%</Text></View>
 
-                          <View style={{flexDirection: 'row', marginTop: 15, gap: 10}}>
+                          {/* UPDATED QUOTE ACTION BUTTONS */}
+                          <View style={{flexDirection: 'column', marginTop: 15, gap: 10}}>
                               {quote.status !== 'Accepted & Converted' && (
-                                  <TouchableOpacity style={[styles.completeBtn, {backgroundColor: '#4CAF50', flex: 1}]} onPress={() => handleConvertToJob(quote)}>
-                                      <Text style={styles.completeBtnText}>✓ CONVERT</Text>
+                                  <TouchableOpacity style={[styles.completeBtn, {backgroundColor: '#4CAF50', width: '100%', paddingVertical: 12}]} onPress={() => handleConvertToJob(quote)}>
+                                      <Text style={styles.completeBtnText}>✓ CONVERT TO ACTIVE PROJECT</Text>
                                   </TouchableOpacity>
                               )}
-                              <TouchableOpacity style={{ width: 50, backgroundColor: '#333', paddingVertical: 10, borderRadius: 8, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#555' }} onPress={() => openEditQuoteModal(quote)}>
-                                  <Ionicons name="pencil" size={18} color="#FFF" />
-                              </TouchableOpacity>
-                              <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDeleteQuote(quote.id)}>
-                                  <Ionicons name="trash" size={18} color="#FFF" />
-                              </TouchableOpacity>
+                              
+                              <View style={{flexDirection: 'row', gap: 10}}>
+                                  <TouchableOpacity style={[styles.actionBtnBlue, {flex: 1, backgroundColor: '#2196F3'}]} onPress={() => handleShareQuote(quote)}>
+                                      <Text style={styles.actionBtnText}>📤 SEND QUOTE</Text>
+                                  </TouchableOpacity>
+
+                                  <TouchableOpacity style={[styles.actionBtnDark, {flex: 1, backgroundColor: '#9C27B0', borderColor: '#9C27B0'}]} onPress={() => handleGenerateInvoice(quote)}>
+                                      <Text style={styles.actionBtnText}>🧾 INVOICE</Text>
+                                  </TouchableOpacity>
+
+                                  <TouchableOpacity style={{ width: 45, backgroundColor: '#333', paddingVertical: 10, borderRadius: 8, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#555' }} onPress={() => openEditQuoteModal(quote)}>
+                                      <Ionicons name="pencil" size={18} color="#FFF" />
+                                  </TouchableOpacity>
+                                  
+                                  <TouchableOpacity style={[styles.deleteBtn, {width: 45}]} onPress={() => handleDeleteQuote(quote.id)}>
+                                      <Ionicons name="trash" size={18} color="#FFF" />
+                                  </TouchableOpacity>
+                              </View>
                           </View>
+
                       </View>
                   ))}
               </>
@@ -493,20 +572,20 @@ export default function JobsScreen() {
                           <View key={job.id} style={[styles.jobCard, {borderLeftWidth: 4, borderLeftColor: borderColor}]}>
                               <View style={styles.jobHeader}>
                                   <View style={{flexDirection: 'row', alignItems: 'center', flex: 1}}>
-                                    <View style={{flex: 1}}>
-                                        <Text style={[styles.jobTitle, viewMode === 'COMPLETED' && {color: '#888'}]} numberOfLines={1}>{job.is_business ? '💼' : '🏠'} {job.name}</Text>
-                                        <Text style={{color: '#666', fontSize: 10, marginTop: 4, fontWeight: 'bold'}}>LIFETIME: ${stats.lifetimeTotal.toFixed(2)}</Text>
-                                    </View>
-                                    {job.name !== 'General Overhead' && (
-                                        <TouchableOpacity onPress={() => openEditJobModal(job)} style={{marginLeft: 15, padding: 5}}>
-                                            <Ionicons name="pencil-outline" size={20} color="#888" />
-                                        </TouchableOpacity>
-                                    )}
+                                      <View style={{flex: 1}}>
+                                          <Text style={[styles.jobTitle, viewMode === 'COMPLETED' && {color: '#888'}]} numberOfLines={1}>{job.is_business ? '💼' : '🏠'} {job.name}</Text>
+                                          <Text style={{color: '#666', fontSize: 10, marginTop: 4, fontWeight: 'bold'}}>LIFETIME: ${stats.lifetimeTotal.toFixed(2)}</Text>
+                                      </View>
+                                      {job.name !== 'General Overhead' && (
+                                          <TouchableOpacity onPress={() => openEditJobModal(job)} style={{marginLeft: 15, padding: 5}}>
+                                              <Ionicons name="pencil-outline" size={20} color="#888" />
+                                          </TouchableOpacity>
+                                      )}
                                   </View>
 
                                   <View style={{alignItems: 'flex-end', marginLeft: 10}}>
-                                    <Text style={{color: '#888', fontSize: 10, fontWeight: 'bold', marginBottom: 2}}>{spendLabel}</Text>
-                                    <Text style={[styles.jobTotal, viewMode === 'COMPLETED' && {color: '#AAA'}]}>${stats.periodTotal.toFixed(2)}</Text>
+                                      <Text style={{color: '#888', fontSize: 10, fontWeight: 'bold', marginBottom: 2}}>{spendLabel}</Text>
+                                      <Text style={[styles.jobTotal, viewMode === 'COMPLETED' && {color: '#AAA'}]}>${stats.periodTotal.toFixed(2)}</Text>
                                   </View>
                               </View>
 
@@ -771,8 +850,8 @@ const styles = StyleSheet.create({
   vaultBtnText: { color: '#FFF', fontWeight: 'bold', fontSize: 12, letterSpacing: 1 },
   breakdownRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }, breakdownLabel: { color: '#888', fontSize: 14, fontWeight: 'bold' }, breakdownValue: { color: '#FFF', fontSize: 14, fontWeight: 'bold' },
   actionRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 15, paddingTop: 15, borderTopWidth: 1, borderTopColor: '#333', gap: 10 },
-  actionBtnBlue: { flex: 1, backgroundColor: '#2196F3', paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
-  actionBtnDark: { flex: 1, backgroundColor: '#333', paddingVertical: 10, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: '#555' },
+  actionBtnBlue: { paddingVertical: 10, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  actionBtnDark: { paddingVertical: 10, borderRadius: 8, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
   actionBtnText: { color: '#FFF', fontWeight: 'bold', fontSize: 12 },
   exportBtn: { backgroundColor: '#FF9800', paddingHorizontal: 15, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   completeBtn: { flex: 1, backgroundColor: '#4CAF50', paddingVertical: 10, borderRadius: 8, alignItems: 'center', justifyContent: 'center' }, completeBtnText: { color: '#000', fontWeight: 'bold', fontSize: 12 },
